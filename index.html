@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="description" content="Selfmology Internal ERP – Inventory, Invoicing & Operations Management">
+  <title>Selfmology ERP</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌿</text></svg>">
+  
+  <!-- PWA Meta Tags -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#FDBA21">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Selfmology">
+  <link rel="apple-touch-icon" href="https://img.icons8.com/color/192/lotus.png">
+</head>
+<body>
+
+<div id="app-container">
+
+  <!-- ================================================== -->
+  <!-- LOGIN SCREEN -->
+  <!-- ================================================== -->
+  <div id="login-screen" class="login-screen">
+    <div class="login-logo">S</div>
+    <h1 class="login-title">Selfmology</h1>
+    <p class="login-subtitle">Internal ERP System</p>
+    <form class="login-form" id="login-form" onsubmit="return false;">
+      <div class="form-group">
+        <label class="form-label">Email</label>
+        <input type="email" id="login-email" class="form-input" placeholder="you@selfmology.com" required>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Password</label>
+        <input type="password" id="login-password" class="form-input" placeholder="Enter password" required>
+      </div>
+      <button type="submit" class="btn btn-primary btn-lg btn-full" id="login-btn">Sign In</button>
+      <p class="text-center text-xs text-secondary mt-md">Default: admin@selfmology.com / admin123</p>
+    </form>
+  </div>
+
+  <!-- ================================================== -->
+  <!-- APP (shown after login) -->
+  <!-- ================================================== -->
+  <div id="app-main" class="hidden">
+
+    <!-- Top Bar -->
+    <header class="top-bar">
+      <div class="top-bar-content">
+        <div>
+          <div class="top-bar-subtitle" id="top-bar-subtitle">Dashboard</div>
+          <h1 class="top-bar-title" id="top-bar-title">Selfmology</h1>
+        </div>
+        <div class="top-bar-actions">
+          <span id="user-role-badge" class="badge badge-admin">Admin</span>
+          <button class="btn btn-ghost btn-icon" id="logout-btn" title="Logout">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+
+      <!-- DASHBOARD PAGE -->
+      <div id="page-dashboard" class="page active">
+        <div class="filter-row">
+          <input type="date" id="dash-date-from" class="form-input" placeholder="From">
+          <input type="date" id="dash-date-to" class="form-input" placeholder="To">
+          <button class="btn btn-sm btn-primary" id="dash-filter-btn">Filter</button>
+        </div>
+
+        <div class="kpi-grid" id="kpi-grid">
+          <div class="kpi-card">
+            <div class="kpi-icon yellow">📦</div>
+            <div class="kpi-value" id="kpi-skus">0</div>
+            <div class="kpi-label">Total SKUs</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-icon mint">📊</div>
+            <div class="kpi-value" id="kpi-stock">0</div>
+            <div class="kpi-label">Stock Units</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-icon blue">💰</div>
+            <div class="kpi-value" id="kpi-value">Rp 0</div>
+            <div class="kpi-label">Stock Value</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-icon red">⚠️</div>
+            <div class="kpi-value" id="kpi-low">0</div>
+            <div class="kpi-label">Low Stock</div>
+          </div>
+        </div>
+
+        <div class="section-header">
+          <h2 class="section-title">Top Selling SKUs</h2>
+        </div>
+        <div id="top-selling-chart" class="bar-chart mb-xl"></div>
+
+        <div class="section-header">
+          <h2 class="section-title">Low Stock Alerts</h2>
+        </div>
+        <div id="low-stock-list"></div>
+
+        <div class="section-header">
+          <h2 class="section-title">Stock Overview</h2>
+        </div>
+        <div class="table-wrapper" id="stock-table-wrapper">
+          <table class="data-table" id="stock-table">
+            <thead>
+              <tr><th>SKU</th><th>Product</th><th>In</th><th>Out</th><th>Stock</th><th>Value</th></tr>
+            </thead>
+            <tbody id="stock-table-body"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- MASTER DATA PAGE -->
+      <div id="page-master" class="page">
+        <div class="search-bar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input type="text" id="master-search" placeholder="Search by SKU or name...">
+        </div>
+        <div id="master-list"></div>
+      </div>
+
+      <!-- INVENTORY PAGE -->
+      <div id="page-inventory" class="page">
+        <div class="tabs">
+          <button class="tab active" data-tab="inv-summary" onclick="App.switchTab('inventory', 'inv-summary')">Summary</button>
+          <button class="tab" data-tab="inv-in" onclick="App.switchTab('inventory', 'inv-in')">Stock In</button>
+          <button class="tab" data-tab="inv-out" onclick="App.switchTab('inventory', 'inv-out')">Stock Out</button>
+          <button class="tab" data-tab="inv-history" onclick="App.switchTab('inventory', 'inv-history')">History</button>
+        </div>
+
+        <!-- Stock In Tab -->
+        <div id="tab-inv-in" class="tab-content">
+          <form id="stock-in-form" class="card" onsubmit="return false;">
+            <h3 class="card-title mb-lg">Record Stock In</h3>
+            <div class="form-group">
+              <label class="form-label">SKU</label>
+              <select id="si-sku" class="form-select sku-dropdown" required></select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Product Name</label>
+              <input type="text" id="si-product-name" class="form-input" readonly placeholder="Auto-filled from SKU">
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label">Quantity</label>
+                <input type="number" id="si-quantity" class="form-input" min="1" required placeholder="0">
+              </div>
+              <div class="form-group">
+                <label class="form-label">Date Received</label>
+                <input type="date" id="si-date" class="form-input">
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label">Batch Number</label>
+                <input type="text" id="si-batch" class="form-input" placeholder="e.g. B2024-001">
+              </div>
+              <div class="form-group">
+                <label class="form-label">Expiry Date</label>
+                <input type="date" id="si-expiry" class="form-input">
+              </div>
+            </div>
+            <button type="submit" class="btn btn-primary btn-full btn-lg" id="si-submit">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14"/></svg>
+              Record Stock In
+            </button>
+          </form>
+        </div>
+
+        <!-- Stock Out Tab -->
+        <div id="tab-inv-out" class="tab-content">
+          <div class="tabs mb-lg">
+            <button class="tab active" onclick="App.switchSubTab('inv-out', 'manual')">Manual</button>
+            <button class="tab" onclick="App.switchSubTab('inv-out', 'csv')">CSV Upload</button>
+          </div>
+
+          <div id="subtab-manual" class="tab-content active">
+            <form id="stock-out-form" class="card" onsubmit="return false;">
+              <h3 class="card-title mb-lg">Record Stock Out</h3>
+              <div class="form-group">
+                <label class="form-label">SKU</label>
+                <select id="so-sku" class="form-select sku-dropdown" required></select>
+              </div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label class="form-label">Quantity</label>
+                  <input type="number" id="so-quantity" class="form-input" min="1" required placeholder="0">
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Date</label>
+                  <input type="date" id="so-date" class="form-input">
+                </div>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Reason</label>
+                <select id="so-reason" class="form-select" required>
+                  <option value="">Select reason...</option>
+                  <option value="Online Sales">Online Sales</option>
+                  <option value="B2B Sales">B2B Sales</option>
+                  <option value="Write-off/Promo">Write-off / Promo</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Reference ID</label>
+                <input type="text" id="so-reference" class="form-input" placeholder="Invoice # or Platform">
+              </div>
+              <button type="submit" class="btn btn-primary btn-full btn-lg" id="so-submit">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14"/></svg>
+                Record Stock Out
+              </button>
+            </form>
+          </div>
+
+          <div id="subtab-csv" class="tab-content">
+            <div class="card">
+              <h3 class="card-title mb-md">Bulk CSV Upload</h3>
+              <p class="text-sm text-secondary mb-lg">Upload a CSV with columns: SKU, Quantity, Date, Reason, Reference_ID</p>
+              <div class="file-upload" id="csv-drop-zone">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                <div class="file-upload-text">Tap to select CSV file</div>
+                <div class="file-upload-hint">or drag & drop here</div>
+              </div>
+              <input type="file" id="csv-file-input" accept=".csv" class="hidden">
+              <div id="csv-preview" class="mt-lg hidden"></div>
+              <button class="btn btn-primary btn-full btn-lg mt-lg hidden" id="csv-import-btn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                Import Rows
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Stock Summary Tab (NEW) -->
+        <div id="tab-inv-summary" class="tab-content active">
+          <div class="section-header">
+            <h2 class="section-title">Current Stock by SKU</h2>
+          </div>
+          <div id="inv-summary-list"></div>
+        </div>
+
+        <!-- History Tab -->
+        <div id="tab-inv-history" class="tab-content">
+          <div class="section-header">
+            <h2 class="section-title">Recent Transactions</h2>
+          </div>
+          <div id="inv-history-list"></div>
+        </div>
+      </div>
+
+      <!-- INVOICES PAGE -->
+      <div id="page-invoices" class="page">
+        <div class="search-bar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input type="text" id="invoice-search" placeholder="Search invoices...">
+        </div>
+        <div id="invoices-list"></div>
+      </div>
+
+      <!-- DELIVERY ORDERS PAGE -->
+      <div id="page-delivery" class="page">
+        <div id="delivery-list"></div>
+      </div>
+
+      <!-- EXPENSES PAGE -->
+      <div id="page-expenses" class="page">
+        <!-- Date Filter for Expenses -->
+        <div class="filter-row mb-md">
+          <input type="date" id="exp-filter-from" class="form-input" placeholder="From">
+          <input type="date" id="exp-filter-to" class="form-input" placeholder="To">
+          <button class="btn btn-sm btn-primary" id="exp-filter-btn" onclick="Expenses.applyFilter()">Filter</button>
+        </div>
+        <div class="tabs mb-lg">
+          <button class="tab active" onclick="Expenses.setView('all')">All</button>
+          <button class="tab" onclick="Expenses.setView('monthly')">Monthly</button>
+        </div>
+        <div id="expenses-list"></div>
+      </div>
+
+    </main>
+
+    <!-- FAB (Floating Action Button) -->
+    <button class="fab" id="fab-btn" title="Add New">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14"/></svg>
+    </button>
+
+    <!-- Bottom Navigation – 6 tabs, no "More" menu -->
+    <nav class="bottom-nav" id="bottom-nav">
+      <button class="nav-item active" data-page="dashboard" id="nav-dashboard">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+        <span>Home</span>
+      </button>
+      <button class="nav-item" data-page="inventory" id="nav-inventory">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+        <span>Inventory</span>
+      </button>
+      <button class="nav-item" data-page="invoices" id="nav-invoices">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+        <span>Invoices</span>
+      </button>
+      <button class="nav-item" data-page="delivery" id="nav-delivery">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
+        <span>Delivery</span>
+      </button>
+      <button class="nav-item" data-page="expenses" id="nav-expenses">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
+        <span>Expenses</span>
+      </button>
+      <button class="nav-item" data-page="master" id="nav-master">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>
+        <span>Products</span>
+      </button>
+    </nav>
+
+  </div><!-- /app-main -->
+
+</div><!-- /app-container -->
+
+<!-- Modal Overlay -->
+<div class="modal-overlay" id="modal-overlay">
+  <div class="modal" id="modal-content">
+    <div class="modal-handle"></div>
+    <div id="modal-body"></div>
+  </div>
+</div>
+
+<!-- Toast Container -->
+<div class="toast-container" id="toast-container"></div>
+
+<!-- Loading Overlay -->
+<div class="loading-overlay" id="loading-overlay">
+  <div class="spinner"></div>
+</div>
+
+<!-- Invoice Print Template (hidden, used for PDF) -->
+<div id="invoice-print" class="invoice-preview hidden"></div>
+
+<!-- Scripts -->
+<script src="js/app.js"></script>
+<script src="js/modules/dashboard.js"></script>
+<script src="js/modules/master-data.js"></script>
+<script src="js/modules/inventory.js"></script>
+<script src="js/modules/invoices.js"></script>
+<script src="js/modules/delivery-orders.js"></script>
+<script src="js/modules/expenses.js"></script>
+
+</body>
+</html>
