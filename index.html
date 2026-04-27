@@ -285,6 +285,15 @@
         <div id="expenses-list"></div>
       </div>
 
+      <!-- USER MANAGEMENT PAGE -->
+      <div id="page-users" class="page">
+        <div class="search-bar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input type="text" id="user-search" placeholder="Search by name or email...">
+        </div>
+        <div id="users-list"></div>
+      </div>
+
     </main>
 
     <!-- FAB (Floating Action Button) -->
@@ -313,6 +322,10 @@
       <button class="nav-item" data-page="expenses" id="nav-expenses">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
         <span>Expenses</span>
+      </button>
+      <button class="nav-item" data-page="users" id="nav-users" style="display: none;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+        <span>Users</span>
       </button>
       <button class="nav-item" data-page="master" id="nav-master">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>
@@ -351,6 +364,7 @@
 <script src="js/modules/invoices.js"></script>
 <script src="js/modules/delivery-orders.js"></script>
 <script src="js/modules/expenses.js"></script>
+<script src="js/modules/users.js"></script>
 
 </body>
 </html>

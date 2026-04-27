@@ -163,6 +163,14 @@ const DemoData = {
     };
   },
 
+  getUsers() {
+    return {
+      success: true, data: [
+        { User_ID: 'USR-001', Email: 'admin@selfmology.com', Role: 'Admin', Name: 'Administrator' },
+        { User_ID: 'USR-002', Email: 'staff@selfmology.com', Role: 'Staff', Name: 'Staff Member' }
+      ]
+    };
+  },
   getDashboardData(data) {
     const master = DemoData.getMasterData().data;
     const invIn = DemoData.getInventoryIn().data;
@@ -292,15 +300,22 @@ const App = {
     document.getElementById('login-screen').classList.add('hidden');
     document.getElementById('app-main').classList.remove('hidden');
 
-    const isAdmin = AppState.user.role === 'Admin';
+    // Role-based visibility
+    const isAdmin = AppState.user && AppState.user.role === 'Admin';
+    const navUsers = document.getElementById('nav-users');
+    const navMaster = document.getElementById('nav-master');
+    const navExpenses = document.getElementById('nav-expenses');
+
+    if (navUsers) navUsers.style.display = isAdmin ? 'flex' : 'none';
+    if (navExpenses) navExpenses.style.display = isAdmin ? 'flex' : 'none';
+    if (navMaster) navMaster.style.display = isAdmin ? 'flex' : 'none';
+    document.getElementById('nav-dashboard').style.display = isAdmin ? 'flex' : 'none';
 
     const badge = document.getElementById('user-role-badge');
-    badge.textContent = AppState.user.role;
-    badge.className = 'badge ' + (isAdmin ? 'badge-admin' : 'badge-staff');
-
-    // Show/hide admin-only nav items
-    document.getElementById('nav-dashboard').classList.toggle('hidden', !isAdmin);
-    document.getElementById('nav-master').classList.toggle('hidden', !isAdmin);
+    if (badge) {
+      badge.textContent = AppState.user.role;
+      badge.className = 'badge ' + (isAdmin ? 'badge-admin' : 'badge-staff');
+    }
 
     const defaultPage = isAdmin ? 'dashboard' : 'inventory';
     this.navigate(defaultPage);
@@ -333,7 +348,8 @@ const App = {
       inventory: 'Inventory',
       invoices: 'Invoices',
       delivery: 'Delivery Orders',
-      expenses: 'Expenses'
+      expenses: 'Expenses',
+      users: 'User Management'
     };
     document.getElementById('top-bar-subtitle').textContent = titles[page] || 'Selfmology';
     document.getElementById('top-bar-title').textContent = 'Selfmology';
@@ -349,6 +365,7 @@ const App = {
       case 'invoices': if (typeof Invoices !== 'undefined') Invoices.load(); break;
       case 'delivery': if (typeof DeliveryOrders !== 'undefined') DeliveryOrders.load(); break;
       case 'expenses': if (typeof Expenses !== 'undefined') Expenses.load(); break;
+      case 'users': if (typeof UsersModule !== 'undefined') UsersModule.load(); break;
     }
   },
 
@@ -416,6 +433,9 @@ const App = {
         break;
       case 'delivery':
         if (typeof DeliveryOrders !== 'undefined') DeliveryOrders.showCreateForm();
+        break;
+      case 'users':
+        if (typeof UsersModule !== 'undefined') UsersModule.showAddForm();
         break;
       default:
         this.toast('Use the form on this page to add items.', 'warning');

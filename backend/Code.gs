@@ -65,6 +65,7 @@ function handleRequest(e) {
       case 'getUsers':            result = getUsers(); break;
       case 'addUser':             result = addUser(data); break;
       case 'updateUser':          result = updateUser(data); break;
+      case 'deleteUser':          result = deleteUser(data); break;
       default:
         result = { success: false, error: 'Unknown action: ' + action };
     }
@@ -491,6 +492,20 @@ function updateUser(data) {
         }
       });
       return { success: true, message: 'User updated.' };
+    }
+  }
+  return { success: false, error: 'User not found.' };
+}
+
+function deleteUser(data) {
+  const sheet = getSheet(SHEETS.USERS);
+  const allData = sheet.getDataRange().getValues();
+  const idIdx = allData[0].indexOf('User_ID');
+  for (let i = 1; i < allData.length; i++) {
+    if (allData[i][idIdx] === data.User_ID) {
+      if (data.User_ID === 'USR-001') return { success: false, error: 'Cannot delete the primary admin account.' };
+      sheet.deleteRow(i + 1);
+      return { success: true, message: 'User deleted.' };
     }
   }
   return { success: false, error: 'User not found.' };
