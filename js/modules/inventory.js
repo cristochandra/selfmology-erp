@@ -1,20 +1,23 @@
 // ============================================================
 // SELFMOLOGY ERP – Inventory Module
-// Updated: Added Stock Summary sub-tab showing qty per SKU
+// Updated: Batch Tracking, Dual Warehouse, Stock Move
 // ============================================================
 
 const Inventory = {
   inData: [],
   outData: [],
+  summary: [],
 
   async load() {
-    const [inResult, outResult] = await Promise.all([
+    const [inResult, outResult, summaryResult] = await Promise.all([
       API.call('getInventoryIn'),
-      API.call('getInventoryOut')
+      API.call('getInventoryOut'),
+      API.call('getStockSummary')
     ]);
 
     if (inResult.success) this.inData = inResult.data;
     if (outResult.success) this.outData = outResult.data;
+    if (summaryResult.success) this.summary = summaryResult.data;
 
     this.renderHistory();
     this.renderSummary();
@@ -27,15 +30,46 @@ const Inventory = {
   },
 
   bindForms() {
-    document.getElementById('si-sku').addEventListener('change', (e) => {
-      const product = App.getProductBySKU(e.target.value);
-      document.getElementById('si-product-name').value = product ? product.Product_Name : '';
+    // SKU Selectors
+    document.querySelectorAll('.sku-dropdown').forEach(sel => {
+      const id = sel.id;
+      sel.addEventListener('change', (e) => {
+        if (id === 'si-sku') {
+          const product = App.getProductBySKU(e.target.value);
+          document.getElementById('si-product-name').value = product ? product.Product_Name : '';
+        } else if (id === 'so-sku') {
+          this.loadBatchDropdown('so');
+        } else if (id === 'sm-sku') {
+          this.loadBatchDropdown('sm');
+        }
+      });
     });
 
     document.getElementById('stock-in-form').onsubmit = (e) => { e.preventDefault(); this.submitStockIn(); };
-    document.getElementById('si-submit').onclick = () => this.submitStockIn();
     document.getElementById('stock-out-form').onsubmit = (e) => { e.preventDefault(); this.submitStockOut(); };
-    document.getElementById('so-submit').onclick = () => this.submitStockOut();
+    document.getElementById('stock-move-form').onsubmit = (e) => { e.preventDefault(); this.submitMove(); };
+  },
+
+  loadBatchDropdown(prefix) {
+    const sku = document.getElementById(`${prefix}-sku`).value;
+    const batchSelect = document.getElementById(`${prefix}-batch`);
+    if (!batchSelect) return;
+    
+    batchSelect.innerHTML = '<option value="">Select Batch...</option>';
+    
+    // For Move Stock, show batches from the "From" warehouse
+    const fromWH = prefix === 'sm' ? document.getElementById('sm-from').value : document.getElementById('so-warehouse').value;
+    
+    const batches = this.summary.filter(s => s.SKU === sku && s.Warehouse_Type === fromWH && s.Qty > 0);
+    
+    batches.forEach(b => {
+      const expStr = b.Expiry_Date ? ` (Exp: ${b.Expiry_Date})` : '';
+      batchSelect.innerHTML += `<option value="${b.Batch_Number}">${b.Batch_Number}${expStr} · ${b.Qty} pcs</option>`;
+    });
+
+    if (batches.length === 0) {
+      batchSelect.innerHTML += `<option value="" disabled>No stock available in ${fromWH}</option>`;
+    }
   },
 
   async submitStockIn() {
@@ -44,7 +78,9 @@ const Inventory = {
       Date_Received: document.getElementById('si-date').value,
       Quantity: document.getElementById('si-quantity').value,
       Batch_Number: document.getElementById('si-batch').value,
-      Expiry_Date: document.getElementById('si-expiry').value
+      Expiry_Date: document.getElementById('si-expiry').value,
+      Warehouse_Type: document.getElementById('si-warehouse').value,
+      Location: document.getElementById('si-location').value
     };
 
     if (!data.SKU || !data.Quantity) {
@@ -55,11 +91,7 @@ const Inventory = {
     const result = await API.call('addInventoryIn', data);
     if (result.success) {
       App.toast(result.message, 'success');
-      document.getElementById('si-sku').value = '';
-      document.getElementById('si-product-name').value = '';
-      document.getElementById('si-quantity').value = '';
-      document.getElementById('si-batch').value = '';
-      document.getElementById('si-expiry').value = '';
+      document.getElementById('stock-in-form').reset();
       this.load();
     }
   },
@@ -67,25 +99,50 @@ const Inventory = {
   async submitStockOut() {
     const data = {
       SKU: document.getElementById('so-sku').value,
+      Batch_Number: document.getElementById('so-batch').value,
+      Warehouse_Type: document.getElementById('so-warehouse').value,
       Date: document.getElementById('so-date').value,
       Quantity: document.getElementById('so-quantity').value,
       Reason: document.getElementById('so-reason').value,
       Reference_ID: document.getElementById('so-reference').value
     };
 
-    if (!data.SKU || !data.Quantity || !data.Reason) {
-      App.toast('SKU, Quantity, and Reason are required.', 'warning');
+    if (!data.SKU || !data.Quantity || !data.Batch_Number) {
+      App.toast('SKU, Quantity, and Batch Number are required.', 'warning');
       return;
     }
 
     const result = await API.call('addInventoryOut', data);
     if (result.success) {
       App.toast(result.message, 'success');
-      document.getElementById('so-sku').value = '';
-      document.getElementById('so-quantity').value = '';
-      document.getElementById('so-reason').value = '';
-      document.getElementById('so-reference').value = '';
+      document.getElementById('stock-out-form').reset();
       this.load();
+    } else {
+      App.toast(result.error, 'danger');
+    }
+  },
+
+  async submitMove() {
+    const data = {
+      SKU: document.getElementById('sm-sku').value,
+      Batch_Number: document.getElementById('sm-batch').value,
+      From_Warehouse: document.getElementById('sm-from').value,
+      To_Warehouse: document.getElementById('sm-to').value,
+      Quantity: document.getElementById('sm-quantity').value
+    };
+
+    if (!data.SKU || !data.Quantity || !data.Batch_Number) {
+      App.toast('All fields are required for stock move.', 'warning');
+      return;
+    }
+
+    const result = await API.call('moveStock', data);
+    if (result.success) {
+      App.toast('Stock moved successfully.', 'success');
+      document.getElementById('stock-move-form').reset();
+      this.load();
+    } else {
+      App.toast(result.error, 'danger');
     }
   },
 
@@ -94,204 +151,145 @@ const Inventory = {
     const container = document.getElementById('inv-summary-list');
     if (!container) return;
 
-    // Build stock map from master data
-    const stockMap = {};
+    const skuMap = {};
     AppState.masterData.forEach(p => {
-      stockMap[p.SKU] = {
-        SKU: p.SKU,
-        Product_Name: p.Product_Name,
-        Category: p.Category,
-        totalIn: 0,
-        totalOut: 0,
-        currentStock: 0
-      };
+      skuMap[p.SKU] = { SKU: p.SKU, Product_Name: p.Product_Name, Offline: 0, Online: 0, Total: 0 };
     });
 
-    this.inData.forEach(r => {
-      if (stockMap[r.SKU]) stockMap[r.SKU].totalIn += Number(r.Quantity) || 0;
-    });
-    this.outData.forEach(r => {
-      if (stockMap[r.SKU]) stockMap[r.SKU].totalOut += Number(r.Quantity) || 0;
-    });
-
-    Object.values(stockMap).forEach(item => {
-      item.currentStock = item.totalIn - item.totalOut;
-    });
-
-    const items = Object.values(stockMap).sort((a, b) => a.Product_Name.localeCompare(b.Product_Name));
-
-    if (items.length === 0) {
-      container.innerHTML = `
-        <div class="empty-state">
-          <div class="empty-state-icon">📊</div>
-          <p class="empty-state-title">No Stock Data</p>
-          <p class="empty-state-text">Add products and record stock movements first</p>
-        </div>`;
-      return;
-    }
-
-    // Total units
-    const totalUnits = items.reduce((sum, i) => sum + i.currentStock, 0);
-
-    container.innerHTML = `
-      <div class="card card-elevated" style="padding:14px;margin-bottom:16px;">
-        <div class="flex-between">
-          <span class="text-sm text-secondary">Total Stock Units</span>
-          <span class="text-bold" style="font-size:20px;">${totalUnits.toLocaleString()}</span>
-        </div>
-      </div>
-      ${items.map(item => {
-        const stockClass = item.currentStock <= 10 ? 'badge-low-stock' : 'badge-in-stock';
-        const product = App.getProductBySKU(item.SKU);
-        const icon = product && product.Image_URL
-          ? `<img src="${product.Image_URL}" alt="" style="width:40px;height:40px;object-fit:cover;border-radius:var(--radius-md);">`
-          : '📦';
-        return `
-          <div class="list-item" style="cursor:default;">
-            <div class="list-item-icon" style="background:var(--color-primary-light);overflow:hidden;">${icon}</div>
-            <div class="list-item-content">
-              <div class="list-item-title">${item.Product_Name}</div>
-              <div class="list-item-meta">${item.SKU} · In: ${item.totalIn} · Out: ${item.totalOut}</div>
-            </div>
-            <span class="badge ${stockClass}" style="font-size:13px;padding:4px 12px;">${item.currentStock}</span>
-          </div>`;
-      }).join('')}
-    `;
-  },
-
-  // --- CSV Upload ---
-  bindCSV() {
-    const dropZone = document.getElementById('csv-drop-zone');
-    const fileInput = document.getElementById('csv-file-input');
-
-    dropZone.onclick = () => fileInput.click();
-
-    dropZone.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      dropZone.style.borderColor = 'var(--color-primary)';
-      dropZone.style.background = 'var(--color-primary-light)';
-    });
-
-    dropZone.addEventListener('dragleave', () => {
-      dropZone.style.borderColor = '';
-      dropZone.style.background = '';
-    });
-
-    dropZone.addEventListener('drop', (e) => {
-      e.preventDefault();
-      dropZone.style.borderColor = '';
-      dropZone.style.background = '';
-      const file = e.dataTransfer.files[0];
-      if (file) this.parseCSV(file);
-    });
-
-    fileInput.addEventListener('change', () => {
-      if (fileInput.files[0]) this.parseCSV(fileInput.files[0]);
-    });
-  },
-
-  parseCSV(file) {
-    if (!file.name.endsWith('.csv')) {
-      App.toast('Please select a CSV file.', 'warning');
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const text = e.target.result;
-      const lines = text.trim().split('\n');
-      if (lines.length < 2) {
-        App.toast('CSV must have a header row and at least one data row.', 'warning');
-        return;
+    this.summary.forEach(s => {
+      if (skuMap[s.SKU]) {
+        if (s.Warehouse_Type === 'Warehouse') skuMap[s.SKU].Offline += Number(s.Qty);
+        else skuMap[s.SKU].Online += Number(s.Qty);
+        skuMap[s.SKU].Total += Number(s.Qty);
       }
+    });
 
-      const headers = lines[0].split(',').map(h => h.trim());
-      const rows = [];
+    const items = Object.values(skuMap).sort((a, b) => a.Total - b.Total);
 
-      for (let i = 1; i < lines.length; i++) {
-        const values = lines[i].split(',').map(v => v.trim());
-        const row = {};
-        headers.forEach((h, idx) => { row[h] = values[idx] || ''; });
-        if (!row.Reason) row.Reason = 'Online Sales';
-        rows.push(row);
-      }
-
-      this._csvRows = rows;
-
-      const preview = document.getElementById('csv-preview');
-      preview.classList.remove('hidden');
-      preview.innerHTML = `
-        <div class="card-elevated card" style="padding:12px;">
-          <p class="text-sm text-bold mb-sm">${rows.length} rows found</p>
-          <div class="table-wrapper">
-            <table class="data-table">
-              <thead><tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr></thead>
-              <tbody>
-                ${rows.slice(0, 5).map(r => `<tr>${headers.map(h => `<td>${r[h] || '-'}</td>`).join('')}</tr>`).join('')}
-                ${rows.length > 5 ? '<tr><td colspan="' + headers.length + '" class="text-center text-secondary">...and ' + (rows.length - 5) + ' more</td></tr>' : ''}
-              </tbody>
-            </table>
+    container.innerHTML = items.map(item => `
+      <div class="card mb-md" style="padding: 16px; cursor: pointer;" onclick="Inventory.showSkuDetails('${item.SKU}')">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
+          <div>
+            <div style="font-weight: 700; font-size: 14px;">${item.Product_Name}</div>
+            <div style="font-size: 11px; color: var(--text-tertiary);">${item.SKU}</div>
+          </div>
+          <div style="text-align: right;">
+            <div style="font-weight: 800; font-size: 18px; color: ${item.Total < 10 ? 'var(--color-danger)' : 'var(--text-primary)'}">${item.Total}</div>
+            <div style="font-size: 9px; text-transform: uppercase;">Total Units</div>
           </div>
         </div>
-      `;
-
-      document.getElementById('csv-import-btn').classList.remove('hidden');
-      document.getElementById('csv-import-btn').onclick = () => this.importCSV();
-    };
-    reader.readAsText(file);
+        
+        <div style="display: flex; gap: 12px; border-top: 1px solid var(--border-light); padding-top: 10px;">
+          <div style="flex: 1;">
+            <div style="font-size: 10px; color: var(--text-tertiary);">Offline Warehouse</div>
+            <div style="font-weight: 700;">${item.Offline}</div>
+          </div>
+          <div style="flex: 1; border-left: 1px solid var(--border-light); padding-left: 12px;">
+            <div style="font-size: 10px; color: var(--text-tertiary);">Online Warehouse</div>
+            <div style="font-weight: 700; color: ${item.Online < 10 ? 'var(--color-danger)' : 'var(--text-primary)'}">${item.Online}</div>
+          </div>
+        </div>
+        ${item.Online < 10 ? '<div style="margin-top: 6px; font-size: 10px; color: var(--color-danger); font-weight: 600;">⚠️ Low Online Stock</div>' : ''}
+      </div>
+    `).join('');
   },
 
-  async importCSV() {
-    if (!this._csvRows || this._csvRows.length === 0) {
-      App.toast('No rows to import.', 'warning');
-      return;
-    }
-    const result = await API.call('bulkAddInventoryOut', { rows: this._csvRows });
-    if (result.success) {
-      App.toast(result.message, 'success');
-      document.getElementById('csv-preview').classList.add('hidden');
-      document.getElementById('csv-import-btn').classList.add('hidden');
-      document.getElementById('csv-file-input').value = '';
-      this._csvRows = null;
-      this.load();
-    }
+  showSkuDetails(sku) {
+    const skuData = this.summary.filter(s => s.SKU === sku);
+    const product = App.getProductBySKU(sku);
+    
+    let html = `
+      <h2 class="modal-title" style="margin-bottom:4px;">${product ? product.Product_Name : sku}</h2>
+      <div style="font-size: 12px; color: var(--text-tertiary); margin-bottom: 16px;">Batch details & Expiry dates</div>
+      
+      <table class="data-table" style="font-size: 13px;">
+        <thead>
+          <tr>
+            <th>Type</th>
+            <th>Batch</th>
+            <th>Qty</th>
+            <th>Exp</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${skuData.map(s => `
+            <tr>
+              <td><span style="font-size:10px; padding:2px 6px;" class="badge ${s.Warehouse_Type === 'Warehouse' ? 'badge-staff' : 'badge-admin'}">${s.Warehouse_Type === 'Warehouse' ? 'Offline' : 'Online'}</span></td>
+              <td>${s.Batch_Number || '-'}</td>
+              <td style="font-weight:700;">${s.Qty}</td>
+              <td style="font-size: 10px;">${s.Expiry_Date || '-'}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+      <button class="btn btn-primary btn-full mt-lg" onclick="App.closeModal()">Close</button>
+    `;
+    App.openModal(html);
   },
 
-  // --- History ---
   renderHistory() {
     const container = document.getElementById('inv-history-list');
+    if (!container) return;
+
     const all = [
-      ...this.inData.map(r => ({ ...r, type: 'in', date: r.Date_Received })),
-      ...this.outData.map(r => ({ ...r, type: 'out', date: r.Date }))
-    ].sort((a, b) => new Date(b.date) - new Date(a.date));
+      ...this.inData.map(r => ({ ...r, type: 'IN', date: r.Date_Received, qty: r.Quantity })),
+      ...this.outData.map(r => ({ ...r, type: 'OUT', date: r.Date, qty: r.Quantity }))
+    ].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 50);
 
     if (all.length === 0) {
-      container.innerHTML = `
-        <div class="empty-state">
-          <div class="empty-state-icon">📋</div>
-          <p class="empty-state-title">No Transactions</p>
-          <p class="empty-state-text">Record your first stock movement</p>
-        </div>`;
+      container.innerHTML = '<div class="empty-state"><p>No history yet.</p></div>';
       return;
     }
 
-    container.innerHTML = all.slice(0, 50).map(r => {
-      const isIn = r.type === 'in';
-      const product = App.getProductBySKU(r.SKU);
-      const productName = r.Product_Name || (product ? product.Product_Name : '');
-      return `
-        <div class="list-item">
-          <div class="list-item-icon" style="background:${isIn ? 'var(--color-mint-light)' : 'var(--color-red-light)'};">
-            ${isIn ? '📥' : '📤'}
-          </div>
-          <div class="list-item-content">
-            <div class="list-item-title">${r.SKU} ${productName ? '· ' + productName : ''}</div>
-            <div class="list-item-meta">${App.formatDate(r.date)} ${r.Reason ? '· ' + r.Reason : ''} ${r.Batch_Number ? '· Batch: ' + r.Batch_Number : ''}</div>
-          </div>
-          <div class="list-item-value" style="color:${isIn ? '#059669' : 'var(--color-red)'};">
-            ${isIn ? '+' : '-'}${r.Quantity}
-          </div>
-        </div>`;
-    }).join('');
+    container.innerHTML = all.map(row => `
+      <div class="list-item">
+        <div class="list-item-icon ${row.type === 'IN' ? 'text-success' : 'text-danger'}" style="background: var(--bg-secondary);">
+          ${row.type === 'IN' ? '↓' : '↑'}
+        </div>
+        <div class="list-item-content">
+          <div class="list-item-title">${row.SKU} · ${row.Product_Name || ''}</div>
+          <div class="list-item-meta">${row.date} · ${row.type === 'IN' ? 'Inbound' : (row.Reason || 'Outbound')} · <strong>${row.qty}</strong></div>
+          <div style="font-size: 10px; color: var(--text-tertiary);">Batch: ${row.Batch_Number || '-'} · ${row.Warehouse_Type || 'Warehouse'}</div>
+        </div>
+      </div>
+    `).join('');
+  },
+
+  bindCSV() {
+    const dropZone = document.getElementById('csv-drop-zone');
+    if (!dropZone) return;
+
+    dropZone.onclick = () => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.csv';
+      input.onchange = (e) => this.processCSV(e.target.files[0]);
+      input.click();
+    };
+  },
+
+  processCSV(file) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      const text = e.target.result;
+      const lines = text.trim().split('\n');
+      if (lines.length < 2) return;
+
+      const headers = lines[0].split(',').map(h => h.trim());
+      const rows = lines.slice(1).map(line => {
+        const values = line.split(',').map(v => v.trim());
+        const obj = {};
+        headers.forEach((h, i) => { obj[h] = values[i]; });
+        return obj;
+      });
+
+      const result = await API.call('bulkAddInventoryOut', { rows });
+      if (result.success) {
+        App.toast(result.message, 'success');
+        this.load();
+      }
+    };
+    reader.readAsText(file);
   }
 };

@@ -11,7 +11,7 @@ const Expenses = {
   async load() {
     const result = await API.call('getExpenses');
     if (result.success) {
-      this.expenses = result.data;
+      this.expenses = result.data.reverse();
       this.filtered = [...this.expenses];
 
       // Set default filter: 1st of month → today

@@ -230,6 +230,8 @@ const DemoData = {
   executeDeliveryOrder(data) { return { success: true, message: 'DO executed – inventory deducted (demo).', inventoryOutCount: 2 }; },
   updatePaymentStatus(data) { return { success: true, message: 'Payment status updated (demo).' }; },
   addExpense(data) { return { success: true, message: 'Expense recorded (demo).', expenseId: 'EXP-DEMO-' + Date.now() }; },
+  addCustomer(data) { return { success: true, message: 'Customer added (demo).' }; },
+  updateCustomer(data) { return { success: true, message: 'Customer updated (demo).' }; },
 };
 
 
@@ -302,13 +304,11 @@ const App = {
 
     // Role-based visibility
     const isAdmin = AppState.user && AppState.user.role === 'Admin';
-    const navUsers = document.getElementById('nav-users');
-    const navMaster = document.getElementById('nav-master');
+    const navMasterGroup = document.getElementById('nav-master-group');
     const navExpenses = document.getElementById('nav-expenses');
 
-    if (navUsers) navUsers.style.display = isAdmin ? 'flex' : 'none';
+    if (navMasterGroup) navMasterGroup.style.display = isAdmin ? 'flex' : 'none';
     if (navExpenses) navExpenses.style.display = isAdmin ? 'flex' : 'none';
-    if (navMaster) navMaster.style.display = isAdmin ? 'flex' : 'none';
     document.getElementById('nav-dashboard').style.display = isAdmin ? 'flex' : 'none';
 
     const badge = document.getElementById('user-role-badge');
@@ -344,28 +344,34 @@ const App = {
 
     const titles = {
       dashboard: 'Dashboard',
-      master: 'Master Data',
       inventory: 'Inventory',
       invoices: 'Invoices',
       delivery: 'Delivery Orders',
       expenses: 'Expenses',
-      users: 'User Management'
+      'master-group': 'Master Data'
     };
     document.getElementById('top-bar-subtitle').textContent = titles[page] || 'Selfmology';
-    document.getElementById('top-bar-title').textContent = 'Selfmology';
 
     this.loadPageData(page);
   },
 
   async loadPageData(page) {
-    switch (page) {
-      case 'dashboard': if (typeof Dashboard !== 'undefined') Dashboard.load(); break;
-      case 'master': if (typeof MasterData !== 'undefined') MasterData.load(); break;
-      case 'inventory': if (typeof Inventory !== 'undefined') Inventory.load(); break;
-      case 'invoices': if (typeof Invoices !== 'undefined') Invoices.load(); break;
-      case 'delivery': if (typeof DeliveryOrders !== 'undefined') DeliveryOrders.load(); break;
-      case 'expenses': if (typeof Expenses !== 'undefined') Expenses.load(); break;
-      case 'users': if (typeof UsersModule !== 'undefined') UsersModule.load(); break;
+    try {
+      switch (page) {
+        case 'dashboard': if (typeof Dashboard !== 'undefined') await Dashboard.load(); break;
+        case 'inventory': if (typeof Inventory !== 'undefined') await Inventory.load(); break;
+        case 'invoices': if (typeof Invoices !== 'undefined') await Invoices.load(); break;
+        case 'delivery': if (typeof DeliveryOrders !== 'undefined') await DeliveryOrders.load(); break;
+        case 'expenses': if (typeof Expenses !== 'undefined') await Expenses.load(); break;
+        case 'master-group': 
+          if (typeof MasterData !== 'undefined') await MasterData.load();
+          if (typeof UsersModule !== 'undefined') await UsersModule.load();
+          if (typeof CustomersModule !== 'undefined') await CustomersModule.load();
+          break;
+      }
+    } catch (err) {
+      console.error(`Error loading page ${page}:`, err);
+      this.toast(`Failed to load ${page} data.`, 'error');
     }
   },
 
@@ -422,9 +428,6 @@ const App = {
 
   handleFAB() {
     switch (AppState.currentPage) {
-      case 'master':
-        if (typeof MasterData !== 'undefined') MasterData.showAddForm();
-        break;
       case 'invoices':
         if (typeof Invoices !== 'undefined') Invoices.showCreateForm();
         break;
@@ -434,8 +437,18 @@ const App = {
       case 'delivery':
         if (typeof DeliveryOrders !== 'undefined') DeliveryOrders.showCreateForm();
         break;
-      case 'users':
-        if (typeof UsersModule !== 'undefined') UsersModule.showAddForm();
+      case 'master-group':
+        // Check which tab is active
+        const activeTab = document.querySelector('#page-master-group .tab.active');
+        const tabId = activeTab ? activeTab.dataset.tab : '';
+        
+        if (tabId === 'master-users') {
+          if (typeof UsersModule !== 'undefined') UsersModule.showAddForm();
+        } else if (tabId === 'master-customers') {
+          if (typeof CustomersModule !== 'undefined') CustomersModule.showAddForm();
+        } else {
+          if (typeof MasterData !== 'undefined') MasterData.showAddForm();
+        }
         break;
       default:
         this.toast('Use the form on this page to add items.', 'warning');

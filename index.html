@@ -24,8 +24,12 @@
   <!-- LOGIN SCREEN -->
   <!-- ================================================== -->
   <div id="login-screen" class="login-screen">
-    <div class="login-logo">S</div>
-    <h1 class="login-title">Selfmology</h1>
+    <div class="login-logo-container" style="margin-bottom: 24px;">
+      <div style="display:flex; align-items:center; gap:4px;">
+        <span style="font-size:48px; font-weight:900; letter-spacing:-2px; color:var(--text-primary);">Selfmology</span>
+        <div style="width:36px; height:18px; border-bottom:6px solid var(--color-primary); border-radius:0 0 50% 50%; margin-bottom:12px;"></div>
+      </div>
+    </div>
     <p class="login-subtitle">Internal ERP System</p>
     <form class="login-form" id="login-form" onsubmit="return false;">
       <div class="form-group">
@@ -49,11 +53,17 @@
     <!-- Top Bar -->
     <header class="top-bar">
       <div class="top-bar-content">
-        <div>
+        <div onclick="App.navigate('dashboard')" style="cursor: pointer;">
           <div class="top-bar-subtitle" id="top-bar-subtitle">Dashboard</div>
-          <h1 class="top-bar-title" id="top-bar-title">Selfmology</h1>
+          <div style="display:flex; align-items:center; gap:2px; margin-top:2px;">
+            <span style="font-size:20px; font-weight:900; letter-spacing:-0.5px;">Selfmology</span>
+            <div style="width:14px; height:7px; border-bottom:3px solid var(--color-primary); border-radius:0 0 50% 50%; margin-bottom:4px;"></div>
+          </div>
         </div>
-        <div class="top-bar-actions">
+          <button class="btn btn-primary btn-sm" id="top-create-btn" onclick="App.handleFAB()" style="display:none; align-items:center; gap:4px; margin-right:8px;">
+            <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+            <span id="top-create-btn-text">Create</span>
+          </button>
           <span id="user-role-badge" class="badge badge-admin">Admin</span>
           <button class="btn btn-ghost btn-icon" id="logout-btn" title="Logout">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
@@ -73,7 +83,9 @@
           <button class="btn btn-sm btn-primary" id="dash-filter-btn">Filter</button>
         </div>
 
-        <div class="kpi-grid" id="kpi-grid">
+        <div id="dashboard-alerts"></div>
+
+        <div class="kpi-grid" id="kpi-grid" style="grid-template-columns: repeat(2, 1fr);">
           <div class="kpi-card">
             <div class="kpi-icon yellow">📦</div>
             <div class="kpi-value" id="kpi-skus">0</div>
@@ -84,19 +96,9 @@
             <div class="kpi-value" id="kpi-stock">0</div>
             <div class="kpi-label">Stock Units</div>
           </div>
-          <div class="kpi-card">
-            <div class="kpi-icon blue">💰</div>
-            <div class="kpi-value" id="kpi-value">Rp 0</div>
-            <div class="kpi-label">Stock Value</div>
-          </div>
-          <div class="kpi-card">
-            <div class="kpi-icon red">⚠️</div>
-            <div class="kpi-value" id="kpi-low">0</div>
-            <div class="kpi-label">Low Stock</div>
-          </div>
         </div>
 
-        <div class="section-header">
+        <div class="section-header mt-lg">
           <h2 class="section-title">Top Selling SKUs</h2>
         </div>
         <div id="top-selling-chart" class="bar-chart mb-xl"></div>
@@ -104,28 +106,65 @@
         <div class="section-header">
           <h2 class="section-title">Low Stock Alerts</h2>
         </div>
-        <div id="low-stock-list"></div>
+        <div id="low-stock-list" class="mb-xl"></div>
 
         <div class="section-header">
           <h2 class="section-title">Stock Overview</h2>
         </div>
-        <div class="table-wrapper" id="stock-table-wrapper">
+        <div class="table-wrapper mb-xl" id="stock-table-wrapper">
           <table class="data-table" id="stock-table">
             <thead>
-              <tr><th>SKU</th><th>Product</th><th>In</th><th>Out</th><th>Stock</th><th>Value</th></tr>
+              <tr><th>SKU</th><th>Product</th><th>Offline WH</th><th>Online WH</th></tr>
             </thead>
             <tbody id="stock-table-body"></tbody>
           </table>
         </div>
+
+        <div class="section-header">
+          <h2 class="section-title">Pending Invoices</h2>
+        </div>
+        <div id="pending-invoices-list" class="mb-xl"></div>
+
+        <div class="section-header">
+          <h2 class="section-title">Expiring Batches (< 1 Year)</h2>
+        </div>
+        <div id="expiring-batches-list" class="mb-xl"></div>
       </div>
 
-      <!-- MASTER DATA PAGE -->
-      <div id="page-master" class="page">
-        <div class="search-bar">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input type="text" id="master-search" placeholder="Search by SKU or name...">
+      <!-- MASTER DATA GROUP PAGE -->
+      <div id="page-master-group" class="page">
+        <div class="tabs mb-lg">
+          <button class="tab active" data-tab="master-products" onclick="App.switchTab('master-group', 'master-products')">Products</button>
+          <button class="tab" data-tab="master-customers" onclick="App.switchTab('master-group', 'master-customers')">Customers</button>
+          <button class="tab" data-tab="master-users" onclick="App.switchTab('master-group', 'master-users')">Users</button>
         </div>
-        <div id="master-list"></div>
+
+        <!-- Products Tab -->
+        <div id="tab-master-products" class="tab-content active">
+          <div class="search-bar">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="text" id="master-search" placeholder="Search by SKU or name...">
+          </div>
+          <div id="master-list"></div>
+        </div>
+
+        <!-- Customers Tab -->
+        <div id="tab-master-customers" class="tab-content">
+          <div class="search-bar">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="text" id="customer-search" placeholder="Search customers...">
+          </div>
+          <div id="customers-list"></div>
+        </div>
+
+        <!-- Users Tab -->
+        <div id="tab-master-users" class="tab-content">
+          <div class="search-bar">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="text" id="user-search" placeholder="Search by name or email...">
+          </div>
+          <div id="users-list"></div>
+        </div>
       </div>
 
       <!-- INVENTORY PAGE -->
@@ -134,6 +173,7 @@
           <button class="tab active" data-tab="inv-summary" onclick="App.switchTab('inventory', 'inv-summary')">Summary</button>
           <button class="tab" data-tab="inv-in" onclick="App.switchTab('inventory', 'inv-in')">Stock In</button>
           <button class="tab" data-tab="inv-out" onclick="App.switchTab('inventory', 'inv-out')">Stock Out</button>
+          <button class="tab" data-tab="inv-move" onclick="App.switchTab('inventory', 'inv-move')">Move Stock</button>
           <button class="tab" data-tab="inv-history" onclick="App.switchTab('inventory', 'inv-history')">History</button>
         </div>
 
@@ -169,9 +209,61 @@
                 <input type="date" id="si-expiry" class="form-input">
               </div>
             </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label">Warehouse</label>
+                <select id="si-warehouse" class="form-select">
+                  <option value="Warehouse">Warehouse (Offline)</option>
+                  <option value="Online Warehouse">Online Warehouse</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Location (e.g. Shelf A1)</label>
+                <input type="text" id="si-location" class="form-input" placeholder="e.g. A1-04">
+              </div>
+            </div>
             <button type="submit" class="btn btn-primary btn-full btn-lg" id="si-submit">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14"/></svg>
               Record Stock In
+            </button>
+          </form>
+        </div>
+
+        <!-- Move Stock Tab -->
+        <div id="tab-inv-move" class="tab-content">
+          <form id="stock-move-form" class="card" onsubmit="return false;">
+            <h3 class="card-title mb-lg">Move Stock Between Warehouses</h3>
+            <div class="form-group">
+              <label class="form-label">SKU</label>
+              <select id="sm-sku" class="form-select sku-dropdown" required onchange="Inventory.loadBatchDropdown('sm')"></select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Batch Number</label>
+              <select id="sm-batch" class="form-select" required></select>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label">From</label>
+                <select id="sm-from" class="form-select" required>
+                  <option value="Warehouse">Warehouse (Offline)</option>
+                  <option value="Online Warehouse">Online Warehouse</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label class="form-label">To</label>
+                <select id="sm-to" class="form-select" required>
+                  <option value="Online Warehouse">Online Warehouse</option>
+                  <option value="Warehouse">Warehouse (Offline)</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Quantity to Move</label>
+              <input type="number" id="sm-quantity" class="form-input" min="1" required placeholder="0">
+            </div>
+            <button type="submit" class="btn btn-primary btn-full btn-lg" id="sm-submit">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 2v20M5 15l7 7 7-7M5 9l7-7 7 7"/></svg>
+              Execute Move
             </button>
           </form>
         </div>
@@ -188,7 +280,20 @@
               <h3 class="card-title mb-lg">Record Stock Out</h3>
               <div class="form-group">
                 <label class="form-label">SKU</label>
-                <select id="so-sku" class="form-select sku-dropdown" required></select>
+                <select id="so-sku" class="form-select sku-dropdown" required onchange="Inventory.loadBatchDropdown('so')"></select>
+              </div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label class="form-label">Batch Number</label>
+                  <select id="so-batch" class="form-select" required></select>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Warehouse</label>
+                  <select id="so-warehouse" class="form-select" required>
+                    <option value="Warehouse">Warehouse (Offline)</option>
+                    <option value="Online Warehouse">Online Warehouse</option>
+                  </select>
+                </div>
               </div>
               <div class="form-row">
                 <div class="form-group">
@@ -285,14 +390,6 @@
         <div id="expenses-list"></div>
       </div>
 
-      <!-- USER MANAGEMENT PAGE -->
-      <div id="page-users" class="page">
-        <div class="search-bar">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input type="text" id="user-search" placeholder="Search by name or email...">
-        </div>
-        <div id="users-list"></div>
-      </div>
 
     </main>
 
@@ -301,11 +398,11 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14"/></svg>
     </button>
 
-    <!-- Bottom Navigation – 6 tabs, no "More" menu -->
+    <!-- Bottom Navigation – 5-6 items, horizontal layout -->
     <nav class="bottom-nav" id="bottom-nav">
       <button class="nav-item active" data-page="dashboard" id="nav-dashboard">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
-        <span>Home</span>
+        <span>Dashboard</span>
       </button>
       <button class="nav-item" data-page="inventory" id="nav-inventory">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
@@ -323,13 +420,9 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
         <span>Expenses</span>
       </button>
-      <button class="nav-item" data-page="users" id="nav-users" style="display: none;">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
-        <span>Users</span>
-      </button>
-      <button class="nav-item" data-page="master" id="nav-master">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>
-        <span>Products</span>
+      <button class="nav-item" data-page="master-group" id="nav-master-group">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>
+        <span>Master Data</span>
       </button>
     </nav>
 
@@ -365,6 +458,7 @@
 <script src="js/modules/delivery-orders.js"></script>
 <script src="js/modules/expenses.js"></script>
 <script src="js/modules/users.js"></script>
+<script src="js/modules/customers.js"></script>
 
 </body>
 </html>
