@@ -355,7 +355,8 @@ function createInvoice(data) {
         if (item.Discount_Type === 'percentage') {
           item.Discount = subtotal * (item.Discount_Value / 100);
         } else {
-          item.Discount = item.Discount_Value;
+          // Per unit discount: Discount_Value * Quantity
+          item.Discount = item.Discount_Value * item.Quantity;
         }
         
         item.Line_Total = subtotal - item.Discount;

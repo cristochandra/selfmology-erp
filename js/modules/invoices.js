@@ -311,7 +311,8 @@ const Invoices = {
     if (discType === 'percentage') {
       discountAmount = subtotal * (discVal / 100);
     } else {
-      discountAmount = discVal;
+      // Per unit discount: discVal * qty
+      discountAmount = discVal * qty;
     }
     
     const lineTotal = subtotal - discountAmount;
@@ -334,7 +335,8 @@ const Invoices = {
       if (discType === 'percentage') {
         discountAmount = subtotal * (discVal / 100);
       } else {
-        discountAmount = discVal;
+        // Per unit discount: discVal * qty
+        discountAmount = discVal * qty;
       }
       
       net += Math.max(0, subtotal - discountAmount);
