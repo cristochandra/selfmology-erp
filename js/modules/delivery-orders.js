@@ -13,6 +13,7 @@ const DeliveryOrders = {
       if (result.success) {
         this.orders = result.data.reverse();
         this.render();
+        this.bindSearch();
       } else {
         throw new Error(result.error || 'Failed to load delivery orders');
       }
@@ -25,21 +26,37 @@ const DeliveryOrders = {
     }
   },
 
+  bindSearch() {
+    const searchInput = document.getElementById('delivery-search');
+    if (!searchInput) return;
+    searchInput.addEventListener('input', () => {
+      this.render();
+    });
+  },
+
   render() {
     const container = document.getElementById('delivery-list');
     if (!container) return;
 
-    if (!this.orders || this.orders.length === 0) {
+    const searchInput = document.getElementById('delivery-search');
+    const query = searchInput ? searchInput.value.toLowerCase() : '';
+
+    const filtered = this.orders.filter(d => 
+      d.DO_ID.toLowerCase().includes(query) || 
+      d.Invoice_ID.toLowerCase().includes(query)
+    );
+
+    if (!filtered || filtered.length === 0) {
       container.innerHTML = `
         <div class="empty-state">
           <div class="empty-state-icon">🚚</div>
           <p class="empty-state-title">No Delivery Orders</p>
-          <p class="empty-state-text">Create a DO from a finalized invoice</p>
+          <p class="empty-state-text">${query ? 'Try a different search query' : 'Create a DO from a finalized invoice'}</p>
         </div>`;
       return;
     }
 
-    container.innerHTML = this.orders.map(d => {
+    container.innerHTML = filtered.map(d => {
       const payBadge = d.Payment_Status === 'Paid'
         ? '<span class="badge badge-finalized">Paid</span>'
         : '<span class="badge badge-low-stock">Unpaid</span>';

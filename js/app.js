@@ -354,14 +354,11 @@ const App = {
 
     // Toggle Top Create Button based on page
     const topCreateBtn = document.getElementById('top-create-btn');
-    const pagesWithCreateBtn = ['invoices', 'delivery', 'expenses', 'master-group'];
+    const pagesWithCreateBtn = ['master-group'];
     if (pagesWithCreateBtn.includes(page)) {
       topCreateBtn.style.display = 'flex';
       // Contextual button text
       const btnTexts = {
-        'invoices': 'New Invoice',
-        'delivery': 'New DO',
-        'expenses': 'Add Expense',
         'master-group': 'Add New'
       };
       document.getElementById('top-create-btn-text').textContent = btnTexts[page];
