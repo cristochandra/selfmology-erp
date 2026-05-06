@@ -979,3 +979,29 @@ function clearAllTransactions() {
   Logger.log('✅ All transactions (Invoices, DOs, Line Items, Inventory Out) cleared successfully.');
   return { success: true, message: 'All transactions cleared.' };
 }
+
+function resetAdminPassword() {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sheet = ss.getSheetByName(SHEETS.USERS);
+  const data = sheet.getDataRange().getValues();
+  const headers = data[0];
+  const emailIdx = headers.indexOf('Email');
+  const passIdx = headers.indexOf('Password');
+  
+  const targetEmail = 'admin@selfmology.com';
+  const newPass = 'admin123';
+  const hashed = simpleHash(newPass);
+  
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][emailIdx] && data[i][emailIdx].toString().toLowerCase() === targetEmail.toLowerCase()) {
+      sheet.getRange(i + 1, passIdx + 1).setValue(hashed);
+      Logger.log('✅ Admin password has been reset to: ' + newPass);
+      return { success: true, message: 'Admin password reset.' };
+    }
+  }
+  
+  // If not found, create it
+  sheet.appendRow(['USR-001', targetEmail, 'Admin', 'Administrator', hashed]);
+  Logger.log('✅ Admin user was not found, so it was created with password: ' + newPass);
+  return { success: true, message: 'Admin user created.' };
+}
