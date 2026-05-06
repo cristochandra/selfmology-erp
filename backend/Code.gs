@@ -153,12 +153,20 @@ function login(data) {
 function getMasterData() { return { success: true, data: getSheetData(SHEETS.MASTER_DATA) }; }
 
 function addProduct(data) {
-  const headers = ['SKU', 'Product_Name', 'Category', 'Description', 'COGS', 'Standard_Price', 'Image_URL'];
-  if (!data.SKU || !data.Product_Name) return { success: false, error: 'SKU and Product Name are required.' };
-  const existing = getSheetData(SHEETS.MASTER_DATA);
-  if (existing.find(p => p.SKU === data.SKU)) return { success: false, error: 'SKU already exists.' };
-  appendRow(SHEETS.MASTER_DATA, data, headers);
-  return { success: true, message: 'Product added successfully.' };
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(10000);
+    const headers = ['SKU', 'Product_Name', 'Category', 'Description', 'COGS', 'Standard_Price', 'Image_URL'];
+    if (!data.SKU || !data.Product_Name) return { success: false, error: 'SKU and Product Name are required.' };
+    const existing = getSheetData(SHEETS.MASTER_DATA);
+    if (existing.find(p => p.SKU === data.SKU)) return { success: false, error: 'SKU already exists.' };
+    appendRow(SHEETS.MASTER_DATA, data, headers);
+    return { success: true, message: 'Product added successfully.' };
+  } catch (err) {
+    return { success: false, error: 'Database busy: ' + err.message };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function updateProduct(data) {
@@ -192,42 +200,58 @@ function deleteProduct(data) {
 function getInventoryIn() { return { success: true, data: getSheetData(SHEETS.INVENTORY_IN) }; }
 
 function addInventoryIn(data) {
-  // Warehouse_Type: 'Warehouse' (Offline) or 'Online Warehouse'
-  const headers = ['Transaction_ID', 'Date_Received', 'SKU', 'Product_Name', 'Quantity', 'Batch_Number', 'Expiry_Date', 'Warehouse_Type', 'Location'];
-  if (data.SKU && !data.Product_Name) {
-    const products = getSheetData(SHEETS.MASTER_DATA);
-    const product = products.find(p => p.SKU === data.SKU);
-    if (product) data.Product_Name = product.Product_Name;
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(10000);
+    // Warehouse_Type: 'Warehouse' (Offline) or 'Online Warehouse'
+    const headers = ['Transaction_ID', 'Date_Received', 'SKU', 'Product_Name', 'Quantity', 'Batch_Number', 'Expiry_Date', 'Warehouse_Type', 'Location'];
+    if (data.SKU && !data.Product_Name) {
+      const products = getSheetData(SHEETS.MASTER_DATA);
+      const product = products.find(p => p.SKU === data.SKU);
+      if (product) data.Product_Name = product.Product_Name;
+    }
+    if (!data.Transaction_ID) data.Transaction_ID = generateId('IN');
+    if (!data.Date_Received) data.Date_Received = formatDate();
+    if (!data.Warehouse_Type) data.Warehouse_Type = 'Warehouse'; // Default to Offline
+    data.Quantity = Number(data.Quantity) || 0;
+    appendRow(SHEETS.INVENTORY_IN, data, headers);
+    return { success: true, message: 'Stock In recorded.', transactionId: data.Transaction_ID };
+  } catch (err) {
+    return { success: false, error: 'Database busy: ' + err.message };
+  } finally {
+    lock.releaseLock();
   }
-  if (!data.Transaction_ID) data.Transaction_ID = generateId('IN');
-  if (!data.Date_Received) data.Date_Received = formatDate();
-  if (!data.Warehouse_Type) data.Warehouse_Type = 'Warehouse'; // Default to Offline
-  data.Quantity = Number(data.Quantity) || 0;
-  appendRow(SHEETS.INVENTORY_IN, data, headers);
-  return { success: true, message: 'Stock In recorded.', transactionId: data.Transaction_ID };
 }
 
 function getInventoryOut() { return { success: true, data: getSheetData(SHEETS.INVENTORY_OUT) }; }
 
 function addInventoryOut(data) {
-  const headers = ['Transaction_ID', 'Date', 'SKU', 'Quantity', 'Reason', 'Reference_ID', 'Batch_Number', 'Warehouse_Type'];
-  if (!data.Transaction_ID) data.Transaction_ID = generateId('OUT');
-  if (!data.Date) data.Date = formatDate();
-  if (!data.Warehouse_Type) data.Warehouse_Type = 'Warehouse';
-  data.Quantity = Number(data.Quantity) || 0;
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(10000);
+    const headers = ['Transaction_ID', 'Date', 'SKU', 'Quantity', 'Reason', 'Reference_ID', 'Batch_Number', 'Warehouse_Type'];
+    if (!data.Transaction_ID) data.Transaction_ID = generateId('OUT');
+    if (!data.Date) data.Date = formatDate();
+    if (!data.Warehouse_Type) data.Warehouse_Type = 'Warehouse';
+    data.Quantity = Number(data.Quantity) || 0;
 
-  // Check availability for Offline Warehouse
-  if (data.Warehouse_Type === 'Warehouse') {
-    const summary = getStockSummaryInternal();
-    const available = summary.find(s => s.SKU === data.SKU && s.Warehouse_Type === 'Warehouse' && s.Batch_Number === data.Batch_Number);
-    const currentQty = available ? available.Qty : 0;
-    if (currentQty < data.Quantity) {
-      return { success: false, error: `Insufficient stock in Offline Warehouse for Batch ${data.Batch_Number}. Available: ${currentQty}` };
+    // Check availability for Offline Warehouse
+    if (data.Warehouse_Type === 'Warehouse') {
+      const summary = getStockSummaryInternal();
+      const available = summary.find(s => s.SKU === data.SKU && s.Warehouse_Type === 'Warehouse' && s.Batch_Number === data.Batch_Number);
+      const currentQty = available ? available.Qty : 0;
+      if (currentQty < data.Quantity) {
+        return { success: false, error: `Insufficient stock in Offline Warehouse for Batch ${data.Batch_Number}. Available: ${currentQty}` };
+      }
     }
-  }
 
-  appendRow(SHEETS.INVENTORY_OUT, data, headers);
-  return { success: true, message: 'Stock Out recorded.', transactionId: data.Transaction_ID };
+    appendRow(SHEETS.INVENTORY_OUT, data, headers);
+    return { success: true, message: 'Stock Out recorded.', transactionId: data.Transaction_ID };
+  } catch (err) {
+    return { success: false, error: 'Database busy: ' + err.message };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function moveStock(data) {
@@ -379,40 +403,46 @@ function updateInvoice(data) {
 }
 
 function finalizeInvoice(data) {
-  const sheet = getSheet(SHEETS.INVOICES);
-  const allData = sheet.getDataRange().getValues();
-  const headers = allData[0];
-  const idIdx = headers.indexOf('Invoice_ID');
-  const statusIdx = headers.indexOf('Status');
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(10000);
+    const sheet = getSheet(SHEETS.INVOICES);
+    const allData = sheet.getDataRange().getValues();
+    const headers = allData[0];
+    const idIdx = headers.indexOf('Invoice_ID');
+    const statusIdx = headers.indexOf('Status');
 
-  for (let i = 1; i < allData.length; i++) {
-    if (allData[i][idIdx] === data.Invoice_ID) {
-      if (allData[i][statusIdx] === 'Finalized') return { success: false, error: 'Already finalized.' };
-      const allInvoices = getSheetData(SHEETS.INVOICES);
-      const finalizedCount = allInvoices.filter(inv => inv.Status === 'Finalized').length;
-      const newId = 'INV-' + String(finalizedCount + 1).padStart(5, '0');
-      const oldId = allData[i][idIdx];
+    for (let i = 1; i < allData.length; i++) {
+      if (allData[i][idIdx] === data.Invoice_ID) {
+        if (allData[i][statusIdx] === 'Finalized') return { success: false, error: 'Already finalized.' };
+        const newId = getNextId('INV');
+        const oldId = allData[i][idIdx];
 
-      sheet.getRange(i + 1, idIdx + 1).setValue(newId);
-      sheet.getRange(i + 1, statusIdx + 1).setValue('Finalized');
+        sheet.getRange(i + 1, idIdx + 1).setValue(newId);
+        sheet.getRange(i + 1, statusIdx + 1).setValue('Finalized');
 
-      // Update line items
-      const lineSheet = getSheet(SHEETS.INVOICE_LINE_ITEMS);
-      const lineData = lineSheet.getDataRange().getValues();
-      const lh = lineData[0];
-      const liIdx = lh.indexOf('Invoice_ID');
-      const llIdx = lh.indexOf('Line_ID');
-      for (let j = 1; j < lineData.length; j++) {
-        if (lineData[j][liIdx] === oldId) {
-          lineSheet.getRange(j + 1, liIdx + 1).setValue(newId);
-          const suffix = lineData[j][llIdx].toString().split('-L').pop();
-          lineSheet.getRange(j + 1, llIdx + 1).setValue(newId + '-L' + suffix);
+        // Update line items
+        const lineSheet = getSheet(SHEETS.INVOICE_LINE_ITEMS);
+        const lineData = lineSheet.getDataRange().getValues();
+        const lh = lineData[0];
+        const liIdx = lh.indexOf('Invoice_ID');
+        const llIdx = lh.indexOf('Line_ID');
+        for (let j = 1; j < lineData.length; j++) {
+          if (lineData[j][liIdx] === oldId) {
+            lineSheet.getRange(j + 1, liIdx + 1).setValue(newId);
+            const suffix = lineData[j][llIdx].toString().split('-L').pop();
+            lineSheet.getRange(j + 1, llIdx + 1).setValue(newId + '-L' + suffix);
+          }
         }
+        return { success: true, message: 'Invoice finalized.', newInvoiceId: newId };
       }
-      return { success: true, message: 'Invoice finalized.', newInvoiceId: newId };
     }
+    return { success: false, error: 'Invoice not found.' };
+  } catch (err) {
+    return { success: false, error: 'Database busy: ' + err.message };
+  } finally {
+    lock.releaseLock();
   }
-  return { success: false, error: 'Invoice not found.' };
 }
 
 function getLineItems(data) {
@@ -817,19 +847,22 @@ function updateCustomer(data) {
 function getNextId(prefix) {
   const sheet = getSheet(SHEETS.INVOICES);
   const data = sheet.getDataRange().getValues();
-  if (data.length < 2) return `${prefix}-100`;
   
   const idIdx = data[0].indexOf('Invoice_ID');
   let max = 0;
-  for (let i = 1; i < data.length; i++) {
-    const id = data[i][idIdx].toString();
-    if (id.startsWith(prefix)) {
-      const num = parseInt(id.split('-').pop());
-      if (!isNaN(num) && num > max) max = num;
+  if (data.length >= 2) {
+    for (let i = 1; i < data.length; i++) {
+      const id = data[i][idIdx].toString();
+      if (id.startsWith(prefix)) {
+        const num = parseInt(id.split('-').pop());
+        if (!isNaN(num) && num > max) max = num;
+      }
     }
   }
-  const nextNum = max === 0 ? 100 : max + 1;
-  return `${prefix}-${nextNum.toString().padStart(3, '0')}`;
+  
+  // Starting point is 96 as requested
+  const nextNum = max < 96 ? 96 : max + 1;
+  return `${prefix}-${nextNum.toString().padStart(4, '0')}`;
 }
 
 function deleteInvoice(data) {
@@ -919,4 +952,30 @@ function generateDummyData() {
   }
   
   return { success: true, message: 'Dummy data generated.' };
+}
+
+function clearAllTransactions() {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  
+  const sheetsToClear = [
+    SHEETS.INVOICES,
+    SHEETS.INVOICE_LINE_ITEMS,
+    SHEETS.DELIVERY_ORDERS,
+    SHEETS.INVENTORY_OUT
+  ];
+  
+  sheetsToClear.forEach(name => {
+    const sheet = ss.getSheetByName(name);
+    if (sheet) {
+      const lastRow = sheet.getLastRow();
+      const lastCol = sheet.getLastColumn();
+      if (lastRow > 1 && lastCol > 0) {
+        // Clear everything below the header row
+        sheet.getRange(2, 1, lastRow - 1, lastCol).clearContent();
+      }
+    }
+  });
+  
+  Logger.log('✅ All transactions (Invoices, DOs, Line Items, Inventory Out) cleared successfully.');
+  return { success: true, message: 'All transactions cleared.' };
 }

@@ -264,8 +264,8 @@ const App = {
       });
     });
 
-    document.getElementById('fab-btn').addEventListener('click', () => this.handleFAB());
-
+    // FAB is removed in favor of top-create-btn
+    // document.getElementById('fab-btn').addEventListener('click', () => this.handleFAB());
     document.getElementById('modal-overlay').addEventListener('click', (e) => {
       if (e.target === e.currentTarget) this.closeModal();
     });
@@ -352,6 +352,23 @@ const App = {
     };
     document.getElementById('top-bar-subtitle').textContent = titles[page] || 'Selfmology';
 
+    // Toggle Top Create Button based on page
+    const topCreateBtn = document.getElementById('top-create-btn');
+    const pagesWithCreateBtn = ['invoices', 'delivery', 'expenses', 'master-group'];
+    if (pagesWithCreateBtn.includes(page)) {
+      topCreateBtn.style.display = 'flex';
+      // Contextual button text
+      const btnTexts = {
+        'invoices': 'New Invoice',
+        'delivery': 'New DO',
+        'expenses': 'Add Expense',
+        'master-group': 'Add New'
+      };
+      document.getElementById('top-create-btn-text').textContent = btnTexts[page];
+    } else {
+      topCreateBtn.style.display = 'none';
+    }
+
     this.loadPageData(page);
   },
 
@@ -426,10 +443,10 @@ const App = {
     if (target) target.classList.add('active');
   },
 
-  handleFAB() {
+  async handleFAB() {
     switch (AppState.currentPage) {
       case 'invoices':
-        if (typeof Invoices !== 'undefined') Invoices.showCreateForm();
+        if (typeof Invoices !== 'undefined') await Invoices.showCreateForm();
         break;
       case 'expenses':
         if (typeof Expenses !== 'undefined') Expenses.showAddForm();
@@ -451,7 +468,8 @@ const App = {
         }
         break;
       default:
-        this.toast('Use the form on this page to add items.', 'warning');
+        // No action needed for other pages since the button is hidden
+        break;
     }
   },
 

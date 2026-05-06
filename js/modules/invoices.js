@@ -170,15 +170,19 @@ const Invoices = {
     App.openModal(html);
   },
 
-  showCreateForm() {
+  async showCreateForm() {
     const today = App.todayStr();
     const dueDate = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+    // Fetch next ID for preview
+    const idResult = await API.call('getNextInvoiceId');
+    const nextId = idResult.success ? idResult.nextId : '...';
 
     // Build customer datalist options
     const customerOptions = AppState.customers.map(c => `<option value="${c}">`).join('');
 
     let html = `
-      <h3 class="modal-title">Create Invoice</h3>
+      <h3 class="modal-title">Create Invoice <span style="font-size:14px; color:var(--text-secondary); margin-left:8px;">(${nextId})</span></h3>
       <form id="invoice-form" onsubmit="return false;">
         <div class="form-group">
           <label class="form-label">Customer Name</label>
