@@ -355,7 +355,7 @@ const App = {
 
     // Toggle Top Create Button based on page
     const topCreateBtn = document.getElementById('top-create-btn');
-    const pagesWithCreateBtn = ['master-group'];
+    const pagesWithCreateBtn = [];
     if (pagesWithCreateBtn.includes(page)) {
       topCreateBtn.style.display = 'flex';
       // Contextual button text
