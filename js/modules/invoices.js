@@ -108,26 +108,31 @@ const Invoices = {
         <h4 class="text-sm text-bold">Line Items</h4>
         <div class="table-wrapper">
           <table class="data-table">
-            <thead><tr><th>SKU</th><th>Product</th><th>Qty</th><th>Price</th><th>Disc</th><th>Total</th></tr></thead>
+            <thead><tr><th>SKU</th><th>Product</th><th>Qty</th><th>Price</th><th>After Disc</th><th>Total</th></tr></thead>
             <tbody>
               ${lines.map(l => {
                 const product = App.getProductBySKU(l.SKU);
                 const productName = product ? product.Product_Name : '-';
-                let discDisplay = '-';
+                let finalUnitPrice = l.Unit_Price;
+                let priceDisplay = App.formatCurrency(l.Unit_Price);
+                let afterDiscDisplay = '-';
+                
                 if (l.Discount_Value > 0) {
+                  priceDisplay = `<span style="text-decoration:line-through; color:var(--text-secondary);">${App.formatCurrency(l.Unit_Price)}</span>`;
                   if (l.Discount_Type === 'percentage') {
-                    discDisplay = l.Discount_Value + '%';
+                    finalUnitPrice = l.Unit_Price - (l.Unit_Price * (l.Discount_Value / 100));
                   } else {
-                    discDisplay = App.formatCurrency(l.Discount_Value);
+                    finalUnitPrice = l.Unit_Price - l.Discount_Value;
                   }
+                  afterDiscDisplay = App.formatCurrency(finalUnitPrice);
                 }
                 return `
                   <tr>
                     <td>${l.SKU}</td>
                     <td style="white-space:normal;max-width:100px;">${productName}</td>
                     <td>${l.Quantity}</td>
-                    <td>${App.formatCurrency(l.Unit_Price)}</td>
-                    <td style="color:var(--color-red);">${discDisplay !== '-' ? '-' + discDisplay : '-'}</td>
+                    <td>${priceDisplay}</td>
+                    <td style="color:var(--color-primary); font-weight:bold;">${afterDiscDisplay}</td>
                     <td>${App.formatCurrency(l.Line_Total)}</td>
                   </tr>`;
               }).join('')}
@@ -144,6 +149,9 @@ const Invoices = {
             <button class="btn btn-primary" style="flex:1;" onclick="Invoices.handleFinalize('${inv.Invoice_ID}')">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"/></svg>
               Finalize
+            </button>
+            <button class="btn btn-outline" style="flex:1;" onclick="Invoices.editInvoice('${inv.Invoice_ID}')">
+              Edit
             </button>
             <button class="btn btn-outline" style="flex:1; border-color: var(--color-red); color: var(--color-red);" onclick="Invoices.handleDelete('${inv.Invoice_ID}')">
               Delete
@@ -170,33 +178,56 @@ const Invoices = {
     App.openModal(html);
   },
 
-  async showCreateForm() {
-    const today = App.todayStr();
-    const dueDate = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  async editInvoice(invoiceId) {
+    App.closeModal();
+    const inv = this.invoices.find(i => i.Invoice_ID === invoiceId);
+    if (!inv) return;
 
-    // Fetch next ID for preview
-    const idResult = await API.call('getNextInvoiceId');
-    const nextId = idResult.success ? idResult.nextId : '...';
+    App.showLoading();
+    const lineResult = await API.call('getLineItems', { Invoice_ID: invoiceId });
+    App.hideLoading();
+    const lines = lineResult.success ? lineResult.data : [];
+
+    this._editingInvoiceId = invoiceId;
+    this.showCreateForm(inv, lines);
+  },
+
+  async showCreateForm(existingInv = null, existingLines = []) {
+    const isEdit = !!existingInv;
+    const customerValue = isEdit ? existingInv.Customer_Name : '';
+    const dateValue = isEdit ? (existingInv.Date_Created.split('T')[0] || App.todayStr()) : App.todayStr();
+    
+    // Calculate initial due date
+    const d = new Date(dateValue);
+    d.setDate(d.getDate() + 14);
+    const dueDateValue = isEdit && existingInv.Payment_Due_Date ? existingInv.Payment_Due_Date.split('T')[0] : d.toISOString().split('T')[0];
+
+    // Fetch next ID for preview if not editing
+    let displayId = isEdit ? existingInv.Invoice_ID : '...';
+    if (!isEdit) {
+      const idResult = await API.call('getNextInvoiceId');
+      if (idResult.success) displayId = idResult.nextId;
+    }
 
     // Build customer datalist options
     const customerOptions = AppState.customers.map(c => `<option value="${c}">`).join('');
 
     let html = `
-      <h3 class="modal-title">Create Invoice <span style="font-size:14px; color:var(--text-secondary); margin-left:8px;">(${nextId})</span></h3>
+      <h3 class="modal-title">${isEdit ? 'Edit Draft Invoice' : 'Create Invoice'} <span style="font-size:14px; color:var(--text-secondary); margin-left:8px;">(${displayId})</span></h3>
       <form id="invoice-form" onsubmit="return false;">
         <div class="form-group">
           <label class="form-label">Customer Name</label>
-          <input type="text" id="inv-customer" class="form-input" list="customer-list" placeholder="Type or select customer" required>
+          <input type="text" id="inv-customer" class="form-input" list="customer-list" placeholder="Type or select customer" value="${customerValue}" required>
           <datalist id="customer-list">${customerOptions}</datalist>
         </div>
         <div class="form-row">
           <div class="form-group">
             <label class="form-label">Date</label>
-            <input type="date" id="inv-date" class="form-input" value="${today}">
+            <input type="date" id="inv-date" class="form-input" value="${dateValue}">
           </div>
           <div class="form-group">
             <label class="form-label">Due Date</label>
-            <input type="date" id="inv-due" class="form-input" value="${dueDate}" readonly style="opacity:0.6">
+            <input type="date" id="inv-due" class="form-input" value="${dueDateValue}" readonly style="opacity:0.6">
             <span class="form-sublabel">Auto: +14 days</span>
           </div>
         </div>
@@ -230,22 +261,32 @@ const Invoices = {
     App.openModal(html);
 
     document.getElementById('inv-date').addEventListener('change', (e) => {
-      const d = new Date(e.target.value);
-      d.setDate(d.getDate() + 14);
-      document.getElementById('inv-due').value = d.toISOString().split('T')[0];
+      const changedD = new Date(e.target.value);
+      changedD.setDate(changedD.getDate() + 14);
+      document.getElementById('inv-due').value = changedD.toISOString().split('T')[0];
     });
 
-    this.addLineItemRow();
+    if (isEdit && existingLines.length > 0) {
+      existingLines.forEach(line => this.addLineItemRow(line));
+    } else {
+      this.addLineItemRow();
+    }
   },
 
   _lineCounter: 0,
 
-  addLineItemRow() {
+  addLineItemRow(existingLine = null) {
     this._lineCounter++;
     const container = document.getElementById('line-items-container');
     const row = document.createElement('div');
     row.className = 'line-item-row';
     row.id = 'line-row-' + this._lineCounter;
+
+    const sku = existingLine ? existingLine.SKU : '';
+    const qty = existingLine ? existingLine.Quantity : 1;
+    const price = existingLine ? existingLine.Unit_Price : 0;
+    const discType = existingLine ? (existingLine.Discount_Type || 'fixed') : 'fixed';
+    const discVal = existingLine ? existingLine.Discount_Value : 0;
 
     // Show product name and total stock
     const options = '<option value="">Select...</option>' +
@@ -254,7 +295,8 @@ const Invoices = {
         if (Inventory && Inventory.summary) {
            currentStock = Inventory.summary.filter(s => s.SKU === p.SKU).reduce((acc, curr) => acc + Number(curr.Qty), 0);
         }
-        return `<option value="${p.SKU}" data-price="${p.Standard_Price}" data-stock="${currentStock}">${p.SKU} – ${p.Product_Name} (Stock: ${currentStock})</option>`;
+        const selected = (p.SKU === sku) ? 'selected' : '';
+        return `<option value="${p.SKU}" data-price="${p.Standard_Price}" data-stock="${currentStock}" ${selected}>${p.SKU} – ${p.Product_Name} (Stock: ${currentStock})</option>`;
       }).join('');
 
     row.innerHTML = `
@@ -262,19 +304,23 @@ const Invoices = {
         <select class="li-sku" onchange="Invoices.onLineItemChange(this)">${options}</select>
         <span class="text-xs text-secondary li-stock-display"></span>
       </div>
-      <input type="number" class="li-qty" min="1" value="1" onchange="Invoices.onLineItemChange(this)" style="flex:1; min-width:50px;">
-      <input type="number" class="li-price" min="0" value="0" onchange="Invoices.onLineItemChange(this)" style="flex:1.5; min-width:70px;">
+      <input type="number" class="li-qty" min="1" value="${qty}" onchange="Invoices.onLineItemChange(this)" style="flex:1; min-width:50px;">
+      <input type="number" class="li-price" min="0" value="${price}" onchange="Invoices.onLineItemChange(this)" style="flex:1.5; min-width:70px;">
       <div style="display:flex; gap:2px; flex:1.5; min-width:100px;">
         <select class="li-disc-type" onchange="Invoices.onLineItemChange(this)" style="padding:4px; font-size:12px; width:45px;">
-          <option value="fixed">Rp</option>
-          <option value="percentage">%</option>
+          <option value="fixed" ${discType === 'fixed' ? 'selected' : ''}>Rp</option>
+          <option value="percentage" ${discType === 'percentage' ? 'selected' : ''}>%</option>
         </select>
-        <input type="number" class="li-discount-val" min="0" value="0" placeholder="Disc" onchange="Invoices.onLineItemChange(this)" style="width:100%;">
+        <input type="number" class="li-discount-val" min="0" value="${discVal}" placeholder="Disc" onchange="Invoices.onLineItemChange(this)" style="width:100%;">
       </div>
       <span class="li-total text-sm text-bold" style="flex:1.5; min-width:80px; align-self:center;">Rp 0</span>
       <button class="remove-line-btn" style="flex:0.5; min-width:30px; align-self:center;" onclick="this.closest('.line-item-row').remove();Invoices.updateTotal();">×</button>
     `;
     container.appendChild(row);
+
+    if (existingLine) {
+      this.onLineItemChange(row.querySelector('.li-qty'));
+    }
   },
 
   onLineItemChange(el) {
@@ -381,8 +427,15 @@ const Invoices = {
       Status: 'Draft' // Status update to finalized handled sequentially below
     };
 
+    const isEditing = !!this._editingInvoiceId;
+    if (isEditing) {
+      header.Invoice_ID = this._editingInvoiceId;
+      await API.call('deleteInvoice', { Invoice_ID: this._editingInvoiceId });
+    }
+
     const result = await API.call('createInvoice', { header, lineItems });
     if (result.success) {
+      this._editingInvoiceId = null;
       if (status === 'Finalized' && result.invoiceId) {
         const finalResult = await API.call('finalizeInvoice', { Invoice_ID: result.invoiceId });
         if (finalResult.success) {
@@ -541,6 +594,7 @@ const Invoices = {
               <th style="text-align:left; padding:12px 8px; font-size:11px; text-transform:uppercase; color:#6B7280;">Description</th>
               <th style="text-align:right; padding:12px 8px; font-size:11px; text-transform:uppercase; color:#6B7280;">Qty</th>
               <th style="text-align:right; padding:12px 8px; font-size:11px; text-transform:uppercase; color:#6B7280;">Unit Price</th>
+              <th style="text-align:right; padding:12px 8px; font-size:11px; text-transform:uppercase; color:#6B7280;">Disc. Price</th>
               <th style="text-align:right; padding:12px 8px; font-size:11px; text-transform:uppercase; color:#6B7280;">Amount</th>
             </tr>
           </thead>
@@ -548,6 +602,21 @@ const Invoices = {
             ${lines.map(l => {
               const product = App.getProductBySKU(l.SKU);
               const pName = product ? product.Product_Name : '-';
+              
+              let originalPriceDisplay = App.formatCurrency(l.Unit_Price);
+              let finalUnitPrice = l.Unit_Price;
+              let afterDiscDisplay = '-';
+              
+              if (l.Discount_Value > 0) {
+                originalPriceDisplay = `<span style="text-decoration:line-through; color:#9CA3AF;">${App.formatCurrency(l.Unit_Price)}</span>`;
+                if (l.Discount_Type === 'percentage') {
+                  finalUnitPrice = l.Unit_Price - (l.Unit_Price * (l.Discount_Value / 100));
+                } else {
+                  finalUnitPrice = l.Unit_Price - l.Discount_Value;
+                }
+                afterDiscDisplay = `<span style="color:#10B981;">${App.formatCurrency(finalUnitPrice)}</span>`;
+              }
+
               return `
                 <tr style="border-bottom:1px solid #E5E7EB;">
                   <td style="padding:16px 8px;">
@@ -555,7 +624,8 @@ const Invoices = {
                     <div style="font-size:11px; color:#9CA3AF; margin-top:2px;">SKU: ${l.SKU}</div>
                   </td>
                   <td style="text-align:right; padding:16px 8px; font-size:14px;">${l.Quantity}</td>
-                  <td style="text-align:right; padding:16px 8px; font-size:14px;">${App.formatCurrency(l.Unit_Price)}</td>
+                  <td style="text-align:right; padding:16px 8px; font-size:14px;">${originalPriceDisplay}</td>
+                  <td style="text-align:right; padding:16px 8px; font-size:14px; font-weight:600;">${afterDiscDisplay}</td>
                   <td style="text-align:right; padding:16px 8px; font-size:14px; font-weight:600;">${App.formatCurrency(l.Line_Total)}</td>
                 </tr>`;
             }).join('')}
