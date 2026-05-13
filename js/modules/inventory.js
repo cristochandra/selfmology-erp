@@ -326,19 +326,53 @@ const Inventory = {
         }
 
         const outRows = [];
+        const recapMap = {};
+        let minDate = null;
+        let maxDate = null;
+        
+        // Sort master products by length descending so more specific names take priority
+        const sortedMaster = [...AppState.masterData].sort((a, b) => b.Product_Name.length - a.Product_Name.length);
         
         for (const row of rawJson) {
-          // Flexible mapping (Shopee/E-commerce standards)
-          const status = row['Status Pesanan'] || row['Order Status'] || '';
-          if (status && status.toString().toLowerCase().includes('batal')) {
-            continue; // Skip cancelled
+          // Status check: ignore cancelled or pending/unpaid orders
+          const status = String(row['Status Pesanan'] || row['Order Status'] || '').toLowerCase();
+          if (status.includes('batal') || status.includes('pending') || status.includes('belum') || status.includes('unpaid')) {
+            continue; // Skip cancelled or unconfirmed/pending orders
           }
           
-          let sku = row['SKU Induk'] || row['Parent SKU'] || row['SKU'];
-          if (!sku) continue; 
-          sku = String(sku).trim();
+          // Rely on Product Name matching against Master Product Data instead of SKU
+          const rawName = String(row['Nama Produk'] || row['Product Name'] || row['Nama Variasi'] || '').trim();
+          if (!rawName) continue;
+          const lowerName = rawName.toLowerCase();
+          
+          let matchedProduct = null;
+          for (const mp of sortedMaster) {
+            if (lowerName.includes(mp.Product_Name.toLowerCase())) {
+              matchedProduct = mp;
+              break;
+            }
+          }
+          
+          // Fallback keyword matching if direct substring fails
+          if (!matchedProduct) {
+            for (const mp of sortedMaster) {
+              const keywords = mp.Product_Name.toLowerCase().split(/\s+/).filter(k => k.length > 2);
+              const hasAll = keywords.length > 0 && keywords.every(k => lowerName.includes(k));
+              if (hasAll) {
+                matchedProduct = mp;
+                break;
+              }
+            }
+          }
 
-          const variasi = (row['Nama Variasi'] || row['Variation Name'] || '').toString().toLowerCase();
+          if (!matchedProduct) {
+            continue; // Skip items that don't match any Master Product
+          }
+          
+          const sku = matchedProduct.SKU;
+          const productName = matchedProduct.Product_Name;
+
+          const variasi = String(row['Nama Variasi'] || row['Variation Name'] || '').toLowerCase();
           let multiplier = 1;
           if (variasi.includes('triple')) multiplier = 3;
           else if (variasi.includes('twin')) multiplier = 2;
@@ -346,10 +380,29 @@ const Inventory = {
           const rawQty = Number(row['Jumlah'] || row['Quantity'] || 1) || 1;
           const totalQty = rawQty * multiplier;
           
-          const refId = row['No. Pesanan'] || row['Order ID'] || '';
-          let dateStr = row['Waktu Pesanan Dibuat'] || row['Order Creation Date'] || '';
+          const refId = String(row['No. Pesanan'] || row['Order ID'] || '').trim();
+          let dateStr = String(row['Waktu Pesanan Dibuat'] || row['Order Creation Date'] || '').trim();
           if (dateStr.length >= 10) dateStr = dateStr.substring(0, 10);
           else dateStr = App.todayStr();
+
+          if (!minDate || dateStr < minDate) minDate = dateStr;
+          if (!maxDate || dateStr > maxDate) maxDate = dateStr;
+
+          // Track recap aggregation
+          if (!recapMap[sku]) {
+            recapMap[sku] = {
+              SKU: sku,
+              Product_Name: productName,
+              totalQty: 0,
+              totalValue: 0
+            };
+          }
+          recapMap[sku].totalQty += totalQty;
+          
+          // Extract Net Value
+          const valStr = String(row['Total Harga Produk'] || row['Total Pembayaran'] || '0').replace(/\./g, '');
+          const netVal = Number(valStr.replace(/[^0-9]/g, '')) || 0;
+          recapMap[sku].totalValue += netVal;
 
           // Apply FIFO logic using local summary
           const batchAssignments = assignBatchFIFOLocal(sku, totalQty);
@@ -370,9 +423,11 @@ const Inventory = {
           }
         }
 
-        if (outRows.length === 0) {
+        const recapItems = Object.values(recapMap);
+
+        if (outRows.length === 0 || recapItems.length === 0) {
           App.hideLoading();
-          App.toast("No valid active sales transactions found.", "info");
+          App.toast("No valid completed sales items matching Master Products found.", "info");
           document.getElementById('csv-file-input').value = '';
           return;
         }
@@ -380,31 +435,46 @@ const Inventory = {
         // Store globally for confirmation
         this.pendingOutRows = outRows;
         
-        // Render Preview
+        // Render Grouped Recap Preview
         const previewEl = document.getElementById('csv-preview');
         const importBtn = document.getElementById('csv-import-btn');
+        const dateRangeDisplay = (minDate && maxDate && minDate !== maxDate) ? `${minDate} to ${maxDate}` : (minDate || App.todayStr());
+
         if (previewEl && importBtn) {
           previewEl.innerHTML = `
-            <div style="font-weight:700; margin-bottom:12px;">Preview: ${outRows.length} transactions ready to deduct</div>
-            <div class="table-responsive" style="max-height:300px; overflow-y:auto;">
+            <div style="background:var(--bg-secondary); padding:12px 16px; border-radius:8px; margin-bottom:16px; display:flex; justify-content:space-between; align-items:center;">
+              <div>
+                <div style="font-size:11px; color:var(--text-tertiary); text-transform:uppercase; font-weight:600;">Date Range</div>
+                <div style="font-weight:700; font-size:13px; color:var(--color-primary);">${dateRangeDisplay}</div>
+              </div>
+              <div style="text-align:right;">
+                <div style="font-size:11px; color:var(--text-tertiary); text-transform:uppercase; font-weight:600;">Matched Items</div>
+                <div style="font-weight:700; font-size:13px;">${recapItems.length} Products</div>
+              </div>
+            </div>
+            <div style="font-weight:700; margin-bottom:8px; font-size:13px;">Sales Summary Recap</div>
+            <div class="table-responsive" style="max-height:320px; overflow-y:auto;">
               <table class="data-table" style="font-size:12px;">
                 <thead>
                   <tr>
-                    <th>Ref ID</th>
-                    <th>Date</th>
-                    <th>SKU</th>
-                    <th>Qty</th>
-                    <th>Batch</th>
+                    <th>Item (Master Product)</th>
+                    <th style="text-align:center;">Net Qty Sold</th>
+                    <th style="text-align:right;">Est. Net Value</th>
                   </tr>
                 </thead>
                 <tbody>
-                  ${outRows.map(r => `
+                  ${recapItems.map(r => `
                     <tr>
-                      <td>${r.Reference_ID}</td>
-                      <td>${r.Date}</td>
-                      <td><strong>${r.SKU}</strong></td>
-                      <td>${r.Quantity}</td>
-                      <td><span class="badge ${r.Batch_Number === 'ONLINE-AUTO' ? 'badge-low-stock' : 'badge-admin'}">${r.Batch_Number}</span></td>
+                      <td>
+                        <div style="font-weight:600; color:var(--text-primary);">${r.Product_Name}</div>
+                        <div style="font-size:10px; color:var(--text-tertiary);">${r.SKU}</div>
+                      </td>
+                      <td style="text-align:center;">
+                        <span class="badge badge-admin" style="font-weight:700; font-size:12px;">${r.totalQty}</span>
+                      </td>
+                      <td style="text-align:right; font-weight:600; color:var(--text-secondary);">
+                        ${App.formatCurrency(r.totalValue)}
+                      </td>
                     </tr>
                   `).join('')}
                 </tbody>
@@ -413,22 +483,24 @@ const Inventory = {
           `;
           previewEl.classList.remove('hidden');
           importBtn.classList.remove('hidden');
-          importBtn.innerHTML = `Execute Deduction (${outRows.length} items)`;
+          importBtn.innerHTML = `Execute Deduction (${outRows.length} total units across batches)`;
         }
 
         App.hideLoading();
-        App.toast("File parsed successfully! Please review and confirm.", 'success');
+        App.toast("E-commerce summary ready! Review recap before execution.", 'success');
         document.getElementById('csv-file-input').value = '';
 
       } catch (err) {
         App.hideLoading();
         console.error(err);
-        App.toast("Error reading file. Ensure it is a valid Excel/CSV.", 'danger');
+        App.toast("Error parsing e-commerce data. Make sure format is correct.", 'danger');
         document.getElementById('csv-file-input').value = '';
       }
     };
     reader.readAsArrayBuffer(file);
   },
+
+
 
   async confirmUpload() {
     if (!this.pendingOutRows || this.pendingOutRows.length === 0) return;
