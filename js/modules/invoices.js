@@ -82,8 +82,27 @@ const Invoices = {
     const lines = lineResult.success ? lineResult.data : [];
 
     let grossSubtotal = 0;
+    let computedLineDiscounts = 0;
     lines.forEach(l => {
-      grossSubtotal += (Number(l.Quantity) || 0) * (Number(l.Unit_Price) || 0);
+      const uPrice = Number(l.Unit_Price) || 0;
+      const q = Number(l.Quantity) || 1;
+      grossSubtotal += uPrice * q;
+      
+      let uDisc = 0;
+      if (Number(l.Discount_Value) > 0) {
+        uDisc = l.Discount_Type === 'percentage' ? uPrice * (Number(l.Discount_Value) / 100) : Number(l.Discount_Value);
+        if (uDisc > uPrice) uDisc = uDisc / q;
+      } else if (Number(l.Discount) > 0) {
+        uDisc = Number(l.Discount) / q;
+      } else {
+        const lt = Number(l.Line_Total) || 0;
+        if (lt > 0 && lt < uPrice * q) {
+          uDisc = ((uPrice * q) - lt) / q;
+        }
+      }
+      if (uDisc > 0.01 && uDisc < uPrice) {
+        computedLineDiscounts += uDisc * q;
+      }
     });
     const netTotal = Number(inv.Total_Amount) || 0;
     
@@ -93,7 +112,7 @@ const Invoices = {
       headerDiscVal = (netTotal / (1 - d/100)) - netTotal;
     }
     const finalGrossSubtotal = grossSubtotal > 0 ? grossSubtotal : (netTotal + headerDiscVal);
-    const finalTotalDiscount = Math.max(0, finalGrossSubtotal - netTotal);
+    const finalTotalDiscount = computedLineDiscounts > 0 ? computedLineDiscounts : Math.max(0, finalGrossSubtotal - netTotal);
 
     let html = `
       <h3 class="modal-title">${inv.Invoice_ID}</h3>
@@ -123,17 +142,33 @@ const Invoices = {
               ${lines.map(l => {
                 const product = App.getProductBySKU(l.SKU);
                 const productName = product ? product.Product_Name : '-';
-                const grossLineTotal = (Number(l.Quantity) || 0) * (Number(l.Unit_Price) || 0);
-                const netLineTotal = l.Line_Total !== undefined && l.Line_Total !== '' ? Number(l.Line_Total) : grossLineTotal;
-                const lineDiscAmount = grossLineTotal - netLineTotal;
-                const hasDiscount = lineDiscAmount > 0.01 && netLineTotal > 0;
                 
-                let priceDisplay = App.formatCurrency(l.Unit_Price);
+                const origUnitPrice = Number(l.Unit_Price) || 0;
+                const qty = Number(l.Quantity) || 1;
+                
+                let nominalUnitDisc = 0;
+                if (Number(l.Discount_Value) > 0) {
+                  nominalUnitDisc = l.Discount_Type === 'percentage' ? origUnitPrice * (Number(l.Discount_Value) / 100) : Number(l.Discount_Value);
+                  if (nominalUnitDisc > origUnitPrice) nominalUnitDisc = nominalUnitDisc / qty;
+                } else if (Number(l.Discount) > 0) {
+                  nominalUnitDisc = Number(l.Discount) / qty;
+                } else {
+                  const grossL = origUnitPrice * qty;
+                  const lt = Number(l.Line_Total) || 0;
+                  if (lt > 0 && lt < grossL) {
+                    nominalUnitDisc = (grossL - lt) / qty;
+                  }
+                }
+                
+                const hasDiscount = nominalUnitDisc > 0.01 && nominalUnitDisc < origUnitPrice;
+                const finalUnitPrice = origUnitPrice - nominalUnitDisc;
+                const rowTotal = hasDiscount ? (finalUnitPrice * qty) : (origUnitPrice * qty);
+                
+                let priceDisplay = App.formatCurrency(origUnitPrice);
                 let afterDiscDisplay = '-';
                 
                 if (hasDiscount) {
-                  priceDisplay = `<span style="text-decoration:line-through; color:var(--text-secondary);">${App.formatCurrency(l.Unit_Price)}</span>`;
-                  const finalUnitPrice = netLineTotal / (Number(l.Quantity) || 1);
+                  priceDisplay = `<span style="text-decoration:line-through; color:var(--text-secondary);">${App.formatCurrency(origUnitPrice)}</span>`;
                   afterDiscDisplay = App.formatCurrency(finalUnitPrice);
                 }
                 return `
@@ -143,7 +178,7 @@ const Invoices = {
                     <td>${l.Quantity}</td>
                     <td>${priceDisplay}</td>
                     <td style="color:var(--color-primary); font-weight:bold;">${afterDiscDisplay}</td>
-                    <td>${App.formatCurrency(netLineTotal)}</td>
+                    <td>${App.formatCurrency(rowTotal)}</td>
                   </tr>`;
               }).join('')}
             </tbody>
@@ -565,8 +600,27 @@ const Invoices = {
     const netTotal = this._calcNet(inv);
     
     let grossSubtotal = 0;
+    let computedLineDiscounts = 0;
     lines.forEach(l => {
-      grossSubtotal += (Number(l.Quantity) || 0) * (Number(l.Unit_Price) || 0);
+      const uPrice = Number(l.Unit_Price) || 0;
+      const q = Number(l.Quantity) || 1;
+      grossSubtotal += uPrice * q;
+      
+      let uDisc = 0;
+      if (Number(l.Discount_Value) > 0) {
+        uDisc = l.Discount_Type === 'percentage' ? uPrice * (Number(l.Discount_Value) / 100) : Number(l.Discount_Value);
+        if (uDisc > uPrice) uDisc = uDisc / q;
+      } else if (Number(l.Discount) > 0) {
+        uDisc = Number(l.Discount) / q;
+      } else {
+        const lt = Number(l.Line_Total) || 0;
+        if (lt > 0 && lt < uPrice * q) {
+          uDisc = ((uPrice * q) - lt) / q;
+        }
+      }
+      if (uDisc > 0.01 && uDisc < uPrice) {
+        computedLineDiscounts += uDisc * q;
+      }
     });
     
     let headerDiscVal = Number(inv.Discount_Value) || 0;
@@ -575,7 +629,7 @@ const Invoices = {
       headerDiscVal = (netTotal / (1 - d/100)) - netTotal;
     }
     const finalGrossSubtotal = grossSubtotal > 0 ? grossSubtotal : (netTotal + headerDiscVal);
-    const finalTotalDiscount = Math.max(0, finalGrossSubtotal - netTotal);
+    const finalTotalDiscount = computedLineDiscounts > 0 ? computedLineDiscounts : Math.max(0, finalGrossSubtotal - netTotal);
 
     const printDiv = document.getElementById('invoice-print');
     printDiv.innerHTML = `
@@ -632,17 +686,32 @@ const Invoices = {
               const product = App.getProductBySKU(l.SKU);
               const pName = product ? product.Product_Name : '-';
               
-              const grossLineTotal = (Number(l.Quantity) || 0) * (Number(l.Unit_Price) || 0);
-              const netLineTotal = l.Line_Total !== undefined && l.Line_Total !== '' ? Number(l.Line_Total) : grossLineTotal;
-              const lineDiscAmount = grossLineTotal - netLineTotal;
-              const hasDiscount = lineDiscAmount > 0.01 && netLineTotal > 0;
+              const origUnitPrice = Number(l.Unit_Price) || 0;
+              const qty = Number(l.Quantity) || 1;
               
-              let originalPriceDisplay = App.formatCurrency(l.Unit_Price);
+              let nominalUnitDisc = 0;
+              if (Number(l.Discount_Value) > 0) {
+                nominalUnitDisc = l.Discount_Type === 'percentage' ? origUnitPrice * (Number(l.Discount_Value) / 100) : Number(l.Discount_Value);
+                if (nominalUnitDisc > origUnitPrice) nominalUnitDisc = nominalUnitDisc / qty;
+              } else if (Number(l.Discount) > 0) {
+                nominalUnitDisc = Number(l.Discount) / qty;
+              } else {
+                const grossL = origUnitPrice * qty;
+                const lt = Number(l.Line_Total) || 0;
+                if (lt > 0 && lt < grossL) {
+                  nominalUnitDisc = (grossL - lt) / qty;
+                }
+              }
+              
+              const hasDiscount = nominalUnitDisc > 0.01 && nominalUnitDisc < origUnitPrice;
+              const finalUnitPrice = origUnitPrice - nominalUnitDisc;
+              const rowTotal = hasDiscount ? (finalUnitPrice * qty) : (origUnitPrice * qty);
+              
+              let originalPriceDisplay = App.formatCurrency(origUnitPrice);
               let afterDiscDisplay = '-';
               
               if (hasDiscount) {
-                originalPriceDisplay = `<span style="text-decoration:line-through; color:#9CA3AF;">${App.formatCurrency(l.Unit_Price)}</span>`;
-                const finalUnitPrice = netLineTotal / (Number(l.Quantity) || 1);
+                originalPriceDisplay = `<span style="text-decoration:line-through; color:#9CA3AF;">${App.formatCurrency(origUnitPrice)}</span>`;
                 afterDiscDisplay = `<span style="color:#10B981;">${App.formatCurrency(finalUnitPrice)}</span>`;
               }
 
@@ -655,7 +724,7 @@ const Invoices = {
                   <td style="text-align:right; padding:16px 8px; font-size:14px;">${l.Quantity}</td>
                   <td style="text-align:right; padding:16px 8px; font-size:14px;">${originalPriceDisplay}</td>
                   <td style="text-align:right; padding:16px 8px; font-size:14px; font-weight:600;">${afterDiscDisplay}</td>
-                  <td style="text-align:right; padding:16px 8px; font-size:14px; font-weight:600;">${App.formatCurrency(netLineTotal)}</td>
+                  <td style="text-align:right; padding:16px 8px; font-size:14px; font-weight:600;">${App.formatCurrency(rowTotal)}</td>
                 </tr>`;
             }).join('')}
           </tbody>
