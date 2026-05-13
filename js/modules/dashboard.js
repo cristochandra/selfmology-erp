@@ -4,6 +4,26 @@
 
 const Dashboard = {
   data: null,
+  channel: '',
+
+  setChannel(chan) {
+    this.channel = chan;
+    ['all', 'online', 'b2b'].forEach(c => {
+      const btn = document.getElementById('dash-chan-' + c);
+      if (btn) {
+        if ((c === 'all' && chan === '') || c === chan) {
+          btn.classList.add('active');
+          btn.style.background = '';
+          btn.style.color = '';
+        } else {
+          btn.classList.remove('active');
+          btn.style.background = 'transparent';
+          btn.style.color = 'var(--text-secondary)';
+        }
+      }
+    });
+    this.load();
+  },
 
   async load() {
     const dateFromInput = document.getElementById('dash-date-from');
@@ -13,7 +33,7 @@ const Dashboard = {
     
     try {
       const [result, summaryResult] = await Promise.all([
-        API.call('getDashboardData', { dateFrom, dateTo }),
+        API.call('getDashboardData', { dateFrom, dateTo, channel: this.channel }),
         API.call('getStockSummary')
       ]);
 

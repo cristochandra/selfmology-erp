@@ -461,7 +461,7 @@ function createDeliveryOrder(data) {
   const lock = LockService.getScriptLock();
   try {
     lock.waitLock(10000);
-    const headers = ['DO_ID', 'Invoice_ID', 'Date_Created', 'Status', 'Payment_Status', 'Payment_Proof_URL', 'Shipping_Address'];
+    const headers = ['DO_ID', 'Invoice_ID', 'Date_Created', 'Status', 'Payment_Status', 'Payment_Proof_URL', 'Shipping_Address', 'Payment_Date'];
     if (!data.Invoice_ID) return { success: false, error: 'Invoice_ID is required.' };
     const existing = getSheetData(SHEETS.DELIVERY_ORDERS);
     if (existing.find(d => d.Invoice_ID === data.Invoice_ID)) return { success: false, error: 'DO already exists for this invoice.' };
@@ -476,6 +476,7 @@ function createDeliveryOrder(data) {
     data.Status = 'Pending';
     data.Payment_Status = 'Unpaid';
     data.Payment_Proof_URL = '';
+    data.Payment_Date = '';
     appendRow(SHEETS.DELIVERY_ORDERS, data, headers);
     return { success: true, message: 'Delivery Order created.', doId: data.DO_ID };
   } catch (err) {
@@ -545,11 +546,13 @@ function updatePaymentStatus(data) {
   const idIdx = headers.indexOf('DO_ID');
   const payIdx = headers.indexOf('Payment_Status');
   const proofIdx = headers.indexOf('Payment_Proof_URL');
+  const dateIdx = headers.indexOf('Payment_Date');
 
   for (let i = 1; i < allData.length; i++) {
     if (allData[i][idIdx] === data.DO_ID) {
       if (payIdx >= 0) sheet.getRange(i + 1, payIdx + 1).setValue(data.Payment_Status || 'Unpaid');
       if (proofIdx >= 0 && data.Payment_Proof_URL) sheet.getRange(i + 1, proofIdx + 1).setValue(data.Payment_Proof_URL);
+      if (dateIdx >= 0 && data.Payment_Date !== undefined) sheet.getRange(i + 1, dateIdx + 1).setValue(data.Payment_Date);
       return { success: true, message: 'Payment status updated.' };
     }
   }
@@ -616,9 +619,13 @@ function getDashboardData(options) {
 
   const lowStockOnlineCount = stockDetails.filter(s => s.onlineStock < 10).length;
 
+  const channelFilter = options.channel || '';
   const salesMap = {};
   invOut.forEach(r => {
     if (r.Reason && (r.Reason === 'B2B Sales' || r.Reason === 'Online Sales')) {
+      if (channelFilter === 'online' && r.Reason !== 'Online Sales') return;
+      if (channelFilter === 'b2b' && r.Reason !== 'B2B Sales') return;
+
       if (!salesMap[r.SKU]) salesMap[r.SKU] = { SKU: r.SKU, totalSold: 0 };
       salesMap[r.SKU].totalSold += Number(r.Quantity) || 0;
     }
@@ -717,7 +724,7 @@ function initializeSheets() {
     'Inventory_Out':      ['Transaction_ID', 'Date', 'SKU', 'Quantity', 'Reason', 'Reference_ID'],
     'Invoices':           ['Invoice_ID', 'Date_Created', 'Customer_Name', 'Total_Amount', 'Discount_Value', 'Discount_Type', 'Status', 'Payment_Due_Date'],
     'Invoice_Line_Items': ['Line_ID', 'Invoice_ID', 'SKU', 'Quantity', 'Unit_Price', 'Line_Total'],
-    'Delivery_Orders':    ['DO_ID', 'Invoice_ID', 'Date_Created', 'Status', 'Payment_Status', 'Payment_Proof_URL'],
+    'Delivery_Orders':    ['DO_ID', 'Invoice_ID', 'Date_Created', 'Status', 'Payment_Status', 'Payment_Proof_URL', 'Shipping_Address', 'Payment_Date'],
     'Expenses':           ['Expense_ID', 'Date', 'Category', 'Amount', 'Notes', 'Receipt_Image_URL'],
     'Users':              ['User_ID', 'Email', 'Role', 'Name', 'Password'],
     'Customers':          ['Customer_Name']

@@ -98,8 +98,13 @@
           </div>
         </div>
 
-        <div class="section-header mt-lg">
-          <h2 class="section-title">Top Selling SKUs</h2>
+        <div class="section-header mt-lg" style="display:flex; justify-content:space-between; align-items:center;">
+          <h2 class="section-title" style="margin:0;">Top Selling SKUs</h2>
+          <div style="display:flex; background:var(--bg-secondary); padding:2px; border-radius:6px; gap:2px;">
+            <button class="btn btn-xs active" id="dash-chan-all" onclick="Dashboard.setChannel('')" style="font-size:10px; padding:4px 8px; border-radius:4px;">All</button>
+            <button class="btn btn-xs" id="dash-chan-online" onclick="Dashboard.setChannel('online')" style="font-size:10px; padding:4px 8px; border-radius:4px; background:transparent; color:var(--text-secondary);">Online</button>
+            <button class="btn btn-xs" id="dash-chan-b2b" onclick="Dashboard.setChannel('b2b')" style="font-size:10px; padding:4px 8px; border-radius:4px; background:transparent; color:var(--text-secondary);">B2B</button>
+          </div>
         </div>
         <div id="top-selling-chart" class="bar-chart mb-xl"></div>
 

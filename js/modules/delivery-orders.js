@@ -215,6 +215,7 @@ const DeliveryOrders = {
         ${isPaid ? `
           <div style="background:var(--color-mint-light);border-radius:var(--radius-md);padding:12px 16px;">
             <p class="text-sm" style="color:#059669;"><strong>✅ Payment Received</strong></p>
+            ${d.Payment_Date ? `<p class="text-xs" style="color:#059669;margin-top:2px;">Paid on: ${App.formatDate(d.Payment_Date)}</p>` : ''}
           </div>
           ${d.Payment_Proof_URL ? `
             <div class="mt-sm">
@@ -226,6 +227,10 @@ const DeliveryOrders = {
             Mark as Unpaid
           </button>
         ` : `
+          <div class="form-group mt-sm mb-sm">
+            <label class="form-label">Payment Date</label>
+            <input type="date" id="payment-date-input-${d.DO_ID}" class="form-input" value="${App.todayStr()}">
+          </div>
           <div class="form-group mt-sm">
             <label class="form-label">Upload Proof of Payment</label>
             <div class="file-upload" id="payment-proof-drop-${d.DO_ID}" style="padding:16px;">
@@ -334,20 +339,27 @@ const DeliveryOrders = {
 
   async updatePayment(doId, status) {
     const proofUrl = this._paymentProofData[doId] || '';
+    const dateInput = document.getElementById('payment-date-input-' + doId);
+    const paymentDate = (status === 'Paid' && dateInput) ? dateInput.value : '';
 
     const result = await API.call('updatePaymentStatus', {
       DO_ID: doId,
       Payment_Status: status,
-      Payment_Proof_URL: proofUrl
+      Payment_Proof_URL: proofUrl,
+      Payment_Date: paymentDate
     });
 
     if (result.success) {
       App.toast(`Payment marked as ${status}`, 'success');
-      // Update local data
       const order = this.orders.find(o => o.DO_ID === doId);
       if (order) {
         order.Payment_Status = status;
-        if (status === 'Paid') order.Payment_Proof_URL = proofUrl;
+        if (status === 'Paid') {
+          order.Payment_Proof_URL = proofUrl;
+          order.Payment_Date = paymentDate;
+        } else {
+          order.Payment_Date = '';
+        }
       }
       App.closeModal();
       this.render();
