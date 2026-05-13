@@ -459,11 +459,14 @@ const Inventory = {
                   <tr>
                     <th>Item (Master Product)</th>
                     <th style="text-align:center;">Net Qty Sold</th>
+                    <th style="text-align:right;">Est. Value/Unit</th>
                     <th style="text-align:right;">Est. Net Value</th>
                   </tr>
                 </thead>
                 <tbody>
-                  ${recapItems.map(r => `
+                  ${recapItems.map(r => {
+                    const valPerUnit = r.totalQty > 0 ? Math.round(r.totalValue / r.totalQty) : 0;
+                    return `
                     <tr>
                       <td>
                         <div style="font-weight:600; color:var(--text-primary);">${r.Product_Name}</div>
@@ -472,11 +475,14 @@ const Inventory = {
                       <td style="text-align:center;">
                         <span class="badge badge-admin" style="font-weight:700; font-size:12px;">${r.totalQty}</span>
                       </td>
+                      <td style="text-align:right; font-weight:600; color:var(--text-tertiary);">
+                        ${App.formatCurrency(valPerUnit)}
+                      </td>
                       <td style="text-align:right; font-weight:600; color:var(--text-secondary);">
                         ${App.formatCurrency(r.totalValue)}
                       </td>
                     </tr>
-                  `).join('')}
+                  `}).join('')}
                 </tbody>
               </table>
             </div>
