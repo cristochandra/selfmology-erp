@@ -483,7 +483,8 @@ const Inventory = {
           `;
           previewEl.classList.remove('hidden');
           importBtn.classList.remove('hidden');
-          importBtn.innerHTML = `Execute Deduction (${outRows.length} total units across batches)`;
+          const totalPcsSold = recapItems.reduce((sum, r) => sum + r.totalQty, 0);
+          importBtn.innerHTML = `Execute Deduction (Total: ${totalPcsSold} Pcs Terjual)`;
         }
 
         App.hideLoading();
