@@ -11,6 +11,7 @@ const AppState = {
   currentPage: 'dashboard',
   masterData: [],
   customers: [], // Customer database for invoice dropdowns
+  customerObjects: [], // Full customer records with agreed B2B_Prices mapping
   isLoading: false,
   demoMode: false
 };
@@ -400,7 +401,8 @@ const App = {
   async loadCustomers() {
     const result = await API.call('getCustomers');
     if (result.success) {
-      AppState.customers = result.data.map(c => c.Customer_Name);
+      AppState.customerObjects = result.data.map(c => typeof c === 'string' ? { Customer_Name: c } : c);
+      AppState.customers = AppState.customerObjects.map(c => c.Customer_Name);
     }
   },
 

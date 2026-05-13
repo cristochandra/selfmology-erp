@@ -825,20 +825,51 @@ function seedSampleData() {
 
 function addCustomer(data) {
   const sheet = getSheet(SHEETS.CUSTOMERS);
-  sheet.appendRow([data.Customer_Name, data.Email || '', data.Phone || '', data.Address || '']);
+  const allData = sheet.getDataRange().getValues();
+  const headers = allData[0] || [];
+  let b2bIdx = headers.indexOf('B2B_Prices');
+  if (b2bIdx === -1 && headers.length > 0) {
+    b2bIdx = headers.length;
+    sheet.getRange(1, b2bIdx + 1).setValue('B2B_Prices');
+    headers.push('B2B_Prices');
+  }
+  const rowObj = {
+    Customer_Name: data.Customer_Name,
+    Email: data.Email || '',
+    Phone: data.Phone || '',
+    Address: data.Address || '',
+    B2B_Prices: data.B2B_Prices || ''
+  };
+  const targetHeaders = headers.length > 0 ? headers : ['Customer_Name', 'Email', 'Phone', 'Address', 'B2B_Prices'];
+  if (headers.length === 0) {
+    sheet.appendRow(targetHeaders);
+  }
+  const row = targetHeaders.map(h => rowObj[h] !== undefined ? rowObj[h] : '');
+  sheet.appendRow(row);
   return { success: true, message: 'Customer added.' };
 }
 
 function updateCustomer(data) {
   const sheet = getSheet(SHEETS.CUSTOMERS);
   const allData = sheet.getDataRange().getValues();
-  const nameIdx = allData[0].indexOf('Customer_Name');
+  const headers = allData[0];
+  let b2bIdx = headers.indexOf('B2B_Prices');
+  if (b2bIdx === -1) {
+    b2bIdx = headers.length;
+    sheet.getRange(1, b2bIdx + 1).setValue('B2B_Prices');
+    headers.push('B2B_Prices');
+  }
+  const nameIdx = headers.indexOf('Customer_Name');
   for (let i = 1; i < allData.length; i++) {
     if (allData[i][nameIdx] === data.Old_Name) {
       sheet.getRange(i + 1, nameIdx + 1).setValue(data.Customer_Name);
-      sheet.getRange(i + 1, allData[0].indexOf('Email') + 1).setValue(data.Email || '');
-      sheet.getRange(i + 1, allData[0].indexOf('Phone') + 1).setValue(data.Phone || '');
-      sheet.getRange(i + 1, allData[0].indexOf('Address') + 1).setValue(data.Address || '');
+      const emailIdx = headers.indexOf('Email');
+      if (emailIdx >= 0) sheet.getRange(i + 1, emailIdx + 1).setValue(data.Email || '');
+      const phoneIdx = headers.indexOf('Phone');
+      if (phoneIdx >= 0) sheet.getRange(i + 1, phoneIdx + 1).setValue(data.Phone || '');
+      const addrIdx = headers.indexOf('Address');
+      if (addrIdx >= 0) sheet.getRange(i + 1, addrIdx + 1).setValue(data.Address || '');
+      sheet.getRange(i + 1, b2bIdx + 1).setValue(data.B2B_Prices || '');
       return { success: true, message: 'Customer updated.' };
     }
   }

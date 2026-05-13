@@ -275,7 +275,7 @@ const Invoices = {
       <form id="invoice-form" onsubmit="return false;">
         <div class="form-group">
           <label class="form-label">Customer Name</label>
-          <input type="text" id="inv-customer" class="form-input" list="customer-list" placeholder="Type or select customer" value="${customerValue}" required>
+          <input type="text" id="inv-customer" class="form-input" list="customer-list" placeholder="Type or select customer" value="${customerValue}" onchange="Invoices.onCustomerChange()" required>
           <datalist id="customer-list">${customerOptions}</datalist>
         </div>
         <div class="form-row">
@@ -381,6 +381,45 @@ const Invoices = {
     }
   },
 
+  onCustomerChange() {
+    const custName = document.getElementById('inv-customer')?.value?.trim();
+    if (!custName) return;
+    const custObj = (AppState.customerObjects || []).find(c => c.Customer_Name === custName);
+    let b2bPrices = {};
+    try { if (custObj && custObj.B2B_Prices) b2bPrices = JSON.parse(custObj.B2B_Prices); } catch (e) {}
+
+    let appliedCount = 0;
+    document.querySelectorAll('#line-items-container .line-item-row').forEach(row => {
+      const skuSelect = row.querySelector('.li-sku');
+      const priceInput = row.querySelector('.li-price');
+      const discTypeSelect = row.querySelector('.li-disc-type');
+      const discValInput = row.querySelector('.li-discount-val');
+      if (skuSelect && priceInput && skuSelect.value) {
+        const sku = skuSelect.value;
+        const standardPrice = Number(skuSelect.options[skuSelect.selectedIndex]?.dataset.price) || 0;
+        if (b2bPrices[sku] !== undefined) {
+          const b2bPrice = Number(b2bPrices[sku]);
+          if (b2bPrice > 0 && standardPrice > b2bPrice) {
+            priceInput.value = standardPrice;
+            if (discTypeSelect) discTypeSelect.value = 'fixed';
+            if (discValInput) discValInput.value = standardPrice - b2bPrice;
+            appliedCount++;
+            
+            const totalSpan = row.querySelector('.li-total');
+            const qty = Number(row.querySelector('.li-qty')?.value) || 0;
+            const lineTotal = b2bPrice * qty;
+            if (totalSpan) totalSpan.textContent = App.formatCurrency(Math.max(0, lineTotal));
+          }
+        }
+      }
+    });
+
+    if (appliedCount > 0) {
+      App.toast(`Applied B2B agreed prices to ${appliedCount} item(s)`, 'info');
+      this.updateTotal();
+    }
+  },
+
   onLineItemChange(el) {
     const row = el.closest('.line-item-row');
     const skuSelect = row.querySelector('.li-sku');
@@ -394,7 +433,26 @@ const Invoices = {
     if (el === skuSelect) {
       const selected = skuSelect.options[skuSelect.selectedIndex];
       if (selected && selected.dataset.price) {
-        priceInput.value = selected.dataset.price;
+        const standardPrice = Number(selected.dataset.price);
+        priceInput.value = standardPrice;
+
+        // Auto apply B2B agreed pricing for selected customer if configured
+        const custName = document.getElementById('inv-customer')?.value?.trim();
+        const custObj = (AppState.customerObjects || []).find(c => c.Customer_Name === custName);
+        let b2bPrices = {};
+        try { if (custObj && custObj.B2B_Prices) b2bPrices = JSON.parse(custObj.B2B_Prices); } catch (e) {}
+
+        const sku = skuSelect.value;
+        if (sku && b2bPrices[sku] !== undefined) {
+          const b2bPrice = Number(b2bPrices[sku]);
+          if (b2bPrice > 0 && standardPrice > b2bPrice) {
+            discTypeSelect.value = 'fixed';
+            discValInput.value = standardPrice - b2bPrice;
+            App.toast(`Applied B2B agreed price for ${sku}`, 'info');
+          }
+        } else {
+          discValInput.value = 0;
+        }
       }
       if (selected && selected.dataset.stock) {
         const stock = Number(selected.dataset.stock);
