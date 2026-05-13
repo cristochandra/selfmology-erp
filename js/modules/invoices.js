@@ -82,17 +82,18 @@ const Invoices = {
     const lines = lineResult.success ? lineResult.data : [];
 
     let grossSubtotal = 0;
-    let totalDiscount = 0;
     lines.forEach(l => {
-      const grossLine = (Number(l.Quantity) || 0) * (Number(l.Unit_Price) || 0);
-      const netLine = Number(l.Line_Total) || 0;
-      grossSubtotal += grossLine;
-      if (grossLine > netLine) {
-        totalDiscount += (grossLine - netLine);
-      }
+      grossSubtotal += (Number(l.Quantity) || 0) * (Number(l.Unit_Price) || 0);
     });
     const netTotal = Number(inv.Total_Amount) || 0;
-    const displayGrossSubtotal = grossSubtotal > 0 ? grossSubtotal : netTotal;
+    
+    let headerDiscVal = Number(inv.Discount_Value) || 0;
+    if (inv.Discount_Type === 'percentage' && netTotal > 0) {
+      const d = Math.min(headerDiscVal, 99);
+      headerDiscVal = (netTotal / (1 - d/100)) - netTotal;
+    }
+    const finalGrossSubtotal = grossSubtotal > 0 ? grossSubtotal : (netTotal + headerDiscVal);
+    const finalTotalDiscount = Math.max(0, finalGrossSubtotal - netTotal);
 
     let html = `
       <h3 class="modal-title">${inv.Invoice_ID}</h3>
@@ -123,9 +124,9 @@ const Invoices = {
                 const product = App.getProductBySKU(l.SKU);
                 const productName = product ? product.Product_Name : '-';
                 const grossLineTotal = (Number(l.Quantity) || 0) * (Number(l.Unit_Price) || 0);
-                const netLineTotal = Number(l.Line_Total) || 0;
+                const netLineTotal = l.Line_Total !== undefined && l.Line_Total !== '' ? Number(l.Line_Total) : grossLineTotal;
                 const lineDiscAmount = grossLineTotal - netLineTotal;
-                const hasDiscount = lineDiscAmount > 0.01;
+                const hasDiscount = lineDiscAmount > 0.01 && netLineTotal > 0;
                 
                 let priceDisplay = App.formatCurrency(l.Unit_Price);
                 let afterDiscDisplay = '-';
@@ -142,7 +143,7 @@ const Invoices = {
                     <td>${l.Quantity}</td>
                     <td>${priceDisplay}</td>
                     <td style="color:var(--color-primary); font-weight:bold;">${afterDiscDisplay}</td>
-                    <td>${App.formatCurrency(l.Line_Total)}</td>
+                    <td>${App.formatCurrency(netLineTotal)}</td>
                   </tr>`;
               }).join('')}
             </tbody>
@@ -150,15 +151,15 @@ const Invoices = {
         </div>
         <div class="flex-between" style="padding-top:12px; margin-top:8px;">
           <span class="text-sm text-secondary">Subtotal</span>
-          <span class="text-sm">${App.formatCurrency(displayGrossSubtotal)}</span>
+          <span class="text-sm">${App.formatCurrency(finalGrossSubtotal)}</span>
         </div>
         <div class="flex-between">
           <span class="text-sm text-secondary">Total Discount</span>
-          <span class="text-sm" style="color:var(--color-red);">-${App.formatCurrency(totalDiscount)}</span>
+          <span class="text-sm" style="color:var(--color-red);">-${App.formatCurrency(finalTotalDiscount)}</span>
         </div>
         <div class="flex-between" style="padding-top:8px;border-top:2px solid var(--text-primary); margin-top:4px;">
           <span class="text-sm text-bold">Net Total</span>
-          <span class="text-sm text-bold" style="font-size:16px;">${App.formatCurrency(inv.Total_Amount)}</span>
+          <span class="text-sm text-bold" style="font-size:16px;">${App.formatCurrency(netTotal)}</span>
         </div>
         <hr style="border:none;border-top:1px solid var(--border-light);">
         <div class="form-actions" style="flex-wrap:wrap;">
@@ -564,16 +565,17 @@ const Invoices = {
     const netTotal = this._calcNet(inv);
     
     let grossSubtotal = 0;
-    let totalDiscount = 0;
     lines.forEach(l => {
-      const grossLine = (Number(l.Quantity) || 0) * (Number(l.Unit_Price) || 0);
-      const netLine = Number(l.Line_Total) || 0;
-      grossSubtotal += grossLine;
-      if (grossLine > netLine) {
-        totalDiscount += (grossLine - netLine);
-      }
+      grossSubtotal += (Number(l.Quantity) || 0) * (Number(l.Unit_Price) || 0);
     });
-    const displayGrossSubtotal = grossSubtotal > 0 ? grossSubtotal : netTotal;
+    
+    let headerDiscVal = Number(inv.Discount_Value) || 0;
+    if (inv.Discount_Type === 'percentage' && netTotal > 0) {
+      const d = Math.min(headerDiscVal, 99);
+      headerDiscVal = (netTotal / (1 - d/100)) - netTotal;
+    }
+    const finalGrossSubtotal = grossSubtotal > 0 ? grossSubtotal : (netTotal + headerDiscVal);
+    const finalTotalDiscount = Math.max(0, finalGrossSubtotal - netTotal);
 
     const printDiv = document.getElementById('invoice-print');
     printDiv.innerHTML = `
@@ -631,9 +633,9 @@ const Invoices = {
               const pName = product ? product.Product_Name : '-';
               
               const grossLineTotal = (Number(l.Quantity) || 0) * (Number(l.Unit_Price) || 0);
-              const netLineTotal = Number(l.Line_Total) || 0;
+              const netLineTotal = l.Line_Total !== undefined && l.Line_Total !== '' ? Number(l.Line_Total) : grossLineTotal;
               const lineDiscAmount = grossLineTotal - netLineTotal;
-              const hasDiscount = lineDiscAmount > 0.01;
+              const hasDiscount = lineDiscAmount > 0.01 && netLineTotal > 0;
               
               let originalPriceDisplay = App.formatCurrency(l.Unit_Price);
               let afterDiscDisplay = '-';
@@ -653,7 +655,7 @@ const Invoices = {
                   <td style="text-align:right; padding:16px 8px; font-size:14px;">${l.Quantity}</td>
                   <td style="text-align:right; padding:16px 8px; font-size:14px;">${originalPriceDisplay}</td>
                   <td style="text-align:right; padding:16px 8px; font-size:14px; font-weight:600;">${afterDiscDisplay}</td>
-                  <td style="text-align:right; padding:16px 8px; font-size:14px; font-weight:600;">${App.formatCurrency(l.Line_Total)}</td>
+                  <td style="text-align:right; padding:16px 8px; font-size:14px; font-weight:600;">${App.formatCurrency(netLineTotal)}</td>
                 </tr>`;
             }).join('')}
           </tbody>
@@ -674,11 +676,11 @@ const Invoices = {
           <div style="width:250px;">
             <div style="display:flex; justify-content:space-between; padding:8px 0; font-size:14px;">
               <span style="color:#6B7280;">Subtotal</span>
-              <span style="font-weight:500;">${App.formatCurrency(displayGrossSubtotal)}</span>
+              <span style="font-weight:500;">${App.formatCurrency(finalGrossSubtotal)}</span>
             </div>
             <div style="display:flex; justify-content:space-between; padding:8px 0; font-size:14px;">
               <span style="color:#6B7280;">Discount</span>
-              <span style="color:#EF4444;">-${App.formatCurrency(totalDiscount)}</span>
+              <span style="color:#EF4444;">-${App.formatCurrency(finalTotalDiscount)}</span>
             </div>
             <div style="display:flex; justify-content:space-between; padding:16px 0; font-size:20px; font-weight:800; border-top:2px solid #1A1A2E; margin-top:8px;">
               <span>Total</span>
