@@ -82,6 +82,20 @@ const Invoices = {
     const lines = lineResult.success ? lineResult.data : [];
     const netTotal = Number(inv.Total_Amount) || 0;
 
+    // First, let's check if Line_Total column in database stores the discount amount instead of net total.
+    // We sum Line_Total and sum (Gross - Line_Total) across all lines.
+    let sumLt = 0;
+    let sumGrossMinusLt = 0;
+    lines.forEach(l => {
+      const up = Number(l.Unit_Price) || 0;
+      const q  = Number(l.Quantity)   || 1;
+      const lt = Number(l.Line_Total) || 0;
+      sumLt += lt;
+      sumGrossMinusLt += (up * q - lt);
+    });
+    // If sumGrossMinusLt is closer to netTotal than sumLt is, legacy Line_Total represents the discount amount.
+    const isLtDiscount = Math.abs(sumGrossMinusLt - netTotal) < Math.abs(sumLt - netTotal);
+
     // Helper: compute per-unit nominal discount for a line item
     const getUnitDisc = (l) => {
       const up = Number(l.Unit_Price) || 0;
@@ -102,9 +116,15 @@ const Invoices = {
         return uDisc < up ? uDisc : 0;
       }
       // Fallback: infer from Line_Total
-      const lt = Number(l.Line_Total);
+      const lt = Number(l.Line_Total) || 0;
       if (lt > 0 && lt < up * q) {
-        return (up * q - lt) / q;
+        if (isLtDiscount) {
+          // lt is the total discount amount for this line
+          return lt / q;
+        } else {
+          // lt is the net total amount for this line
+          return (up * q - lt) / q;
+        }
       }
       return 0;
     };
@@ -583,7 +603,19 @@ const Invoices = {
     const lines = lineResult.success ? lineResult.data : [];
     const netTotal = this._calcNet(inv);
 
-    // Helper: per-unit discount (same logic as showDetail)
+    // Intelligent legacy check: does Line_Total represent discount amount?
+    let sumLt = 0;
+    let sumGrossMinusLt = 0;
+    lines.forEach(l => {
+      const up = Number(l.Unit_Price) || 0;
+      const q  = Number(l.Quantity)   || 1;
+      const lt = Number(l.Line_Total) || 0;
+      sumLt += lt;
+      sumGrossMinusLt += (up * q - lt);
+    });
+    const isLtDiscountPrint = Math.abs(sumGrossMinusLt - netTotal) < Math.abs(sumLt - netTotal);
+
+    // Helper: per-unit discount
     const getUnitDiscP = (l) => {
       const up = Number(l.Unit_Price) || 0;
       const q  = Number(l.Quantity)  || 1;
@@ -598,8 +630,10 @@ const Invoices = {
         const uDisc = d / q;
         return uDisc < up ? uDisc : 0;
       }
-      const lt = Number(l.Line_Total);
-      if (lt > 0 && lt < up * q) return (up * q - lt) / q;
+      const lt = Number(l.Line_Total) || 0;
+      if (lt > 0 && lt < up * q) {
+        return isLtDiscountPrint ? (lt / q) : ((up * q - lt) / q);
+      }
       return 0;
     };
 
