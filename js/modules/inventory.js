@@ -257,39 +257,203 @@ const Inventory = {
 
   bindCSV() {
     const dropZone = document.getElementById('csv-drop-zone');
-    if (!dropZone) return;
+    const input = document.getElementById('csv-file-input');
+    const importBtn = document.getElementById('csv-import-btn');
+    if (!dropZone || !input) return;
 
-    dropZone.onclick = () => {
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.accept = '.csv';
-      input.onchange = (e) => this.processCSV(e.target.files[0]);
-      input.click();
-    };
+    dropZone.onclick = () => input.click();
+    input.onchange = (e) => this.processUpload(e.target.files[0]);
+    
+    if (importBtn) {
+      importBtn.onclick = () => this.confirmUpload();
+    }
   },
 
-  processCSV(file) {
+  assignBatchFIFO(sku, qtyNeeded) {
+    // We deep clone summary locally in processUpload, but assignBatchFIFO is called there.
+    // It's safer to pass the active summary map so preview doesn't permanently modify it until confirm.
+    return []; // We'll handle this in processUpload
+  },
+
+  processUpload(file) {
     if (!file) return;
+    App.showLoading();
+    
+    // Create a deep copy of summary to simulate FIFO for the preview without touching real stock yet
+    const localSummary = JSON.parse(JSON.stringify(this.summary));
+    
+    const assignBatchFIFOLocal = (sku, qtyNeeded) => {
+      const batches = localSummary
+        .filter(s => s.SKU === sku && s.Warehouse_Type === 'Online Warehouse' && s.Qty > 0)
+        .sort((a, b) => {
+          if (a.Expiry_Date && b.Expiry_Date) return new Date(a.Expiry_Date) - new Date(b.Expiry_Date);
+          if (a.Expiry_Date) return -1;
+          if (b.Expiry_Date) return 1;
+          return a.Batch_Number.localeCompare(b.Batch_Number);
+        });
+
+      const assignments = [];
+      let remaining = qtyNeeded;
+
+      for (const b of batches) {
+        if (remaining <= 0) break;
+        const take = Math.min(b.Qty, remaining);
+        assignments.push({ batch: b.Batch_Number, qty: take });
+        remaining -= take;
+      }
+
+      if (remaining > 0) {
+        assignments.push({ batch: 'ONLINE-AUTO', qty: remaining });
+      }
+
+      return assignments;
+    };
+
     const reader = new FileReader();
     reader.onload = async (e) => {
-      const text = e.target.result;
-      const lines = text.trim().split('\n');
-      if (lines.length < 2) return;
+      try {
+        const data = new Uint8Array(e.target.result);
+        const workbook = typeof XLSX !== 'undefined' ? XLSX.read(data, { type: 'array' }) : null;
+        if (!workbook) throw new Error("XLSX library not loaded. Please ensure you are connected to the internet.");
+        
+        const firstSheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[firstSheetName];
+        
+        // Convert to JSON
+        const rawJson = XLSX.utils.sheet_to_json(worksheet);
+        if (!rawJson || rawJson.length === 0) {
+          throw new Error("File is empty or invalid format.");
+        }
 
-      const headers = lines[0].split(',').map(h => h.trim());
-      const rows = lines.slice(1).map(line => {
-        const values = line.split(',').map(v => v.trim());
-        const obj = {};
-        headers.forEach((h, i) => { obj[h] = values[i]; });
-        return obj;
-      });
+        const outRows = [];
+        
+        for (const row of rawJson) {
+          // Flexible mapping (Shopee/E-commerce standards)
+          const status = row['Status Pesanan'] || row['Order Status'] || '';
+          if (status && status.toString().toLowerCase().includes('batal')) {
+            continue; // Skip cancelled
+          }
+          
+          let sku = row['SKU Induk'] || row['Parent SKU'] || row['SKU'];
+          if (!sku) continue; 
+          sku = String(sku).trim();
 
-      const result = await API.call('bulkAddInventoryOut', { rows });
-      if (result.success) {
-        App.toast(result.message, 'success');
-        this.load();
+          const variasi = (row['Nama Variasi'] || row['Variation Name'] || '').toString().toLowerCase();
+          let multiplier = 1;
+          if (variasi.includes('triple')) multiplier = 3;
+          else if (variasi.includes('twin')) multiplier = 2;
+          
+          const rawQty = Number(row['Jumlah'] || row['Quantity'] || 1) || 1;
+          const totalQty = rawQty * multiplier;
+          
+          const refId = row['No. Pesanan'] || row['Order ID'] || '';
+          let dateStr = row['Waktu Pesanan Dibuat'] || row['Order Creation Date'] || '';
+          if (dateStr.length >= 10) dateStr = dateStr.substring(0, 10);
+          else dateStr = App.todayStr();
+
+          // Apply FIFO logic using local summary
+          const batchAssignments = assignBatchFIFOLocal(sku, totalQty);
+          
+          for (const ba of batchAssignments) {
+            outRows.push({
+              SKU: sku,
+              Quantity: ba.qty,
+              Date: dateStr,
+              Reason: 'Online Sales',
+              Reference_ID: refId,
+              Batch_Number: ba.batch,
+              Warehouse_Type: 'Online Warehouse'
+            });
+            // Decrement local summary so next row sees updated stock
+            const summaryRow = localSummary.find(s => s.SKU === sku && s.Warehouse_Type === 'Online Warehouse' && s.Batch_Number === ba.batch);
+            if (summaryRow) summaryRow.Qty -= ba.qty;
+          }
+        }
+
+        if (outRows.length === 0) {
+          App.hideLoading();
+          App.toast("No valid active sales transactions found.", "info");
+          document.getElementById('csv-file-input').value = '';
+          return;
+        }
+
+        // Store globally for confirmation
+        this.pendingOutRows = outRows;
+        
+        // Render Preview
+        const previewEl = document.getElementById('csv-preview');
+        const importBtn = document.getElementById('csv-import-btn');
+        if (previewEl && importBtn) {
+          previewEl.innerHTML = `
+            <div style="font-weight:700; margin-bottom:12px;">Preview: ${outRows.length} transactions ready to deduct</div>
+            <div class="table-responsive" style="max-height:300px; overflow-y:auto;">
+              <table class="data-table" style="font-size:12px;">
+                <thead>
+                  <tr>
+                    <th>Ref ID</th>
+                    <th>Date</th>
+                    <th>SKU</th>
+                    <th>Qty</th>
+                    <th>Batch</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${outRows.map(r => `
+                    <tr>
+                      <td>${r.Reference_ID}</td>
+                      <td>${r.Date}</td>
+                      <td><strong>${r.SKU}</strong></td>
+                      <td>${r.Quantity}</td>
+                      <td><span class="badge ${r.Batch_Number === 'ONLINE-AUTO' ? 'badge-low-stock' : 'badge-admin'}">${r.Batch_Number}</span></td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+          `;
+          previewEl.classList.remove('hidden');
+          importBtn.classList.remove('hidden');
+          importBtn.innerHTML = `Execute Deduction (${outRows.length} items)`;
+        }
+
+        App.hideLoading();
+        App.toast("File parsed successfully! Please review and confirm.", 'success');
+        document.getElementById('csv-file-input').value = '';
+
+      } catch (err) {
+        App.hideLoading();
+        console.error(err);
+        App.toast("Error reading file. Ensure it is a valid Excel/CSV.", 'danger');
+        document.getElementById('csv-file-input').value = '';
       }
     };
-    reader.readAsText(file);
+    reader.readAsArrayBuffer(file);
+  },
+
+  async confirmUpload() {
+    if (!this.pendingOutRows || this.pendingOutRows.length === 0) return;
+    
+    App.showLoading();
+    try {
+      const result = await API.call('bulkAddInventoryOut', { rows: this.pendingOutRows });
+      App.hideLoading();
+      if (result.success) {
+        App.toast(`Successfully processed ${this.pendingOutRows.length} stock out transactions!`, 'success');
+        
+        // Reset preview
+        this.pendingOutRows = null;
+        document.getElementById('csv-preview').classList.add('hidden');
+        document.getElementById('csv-import-btn').classList.add('hidden');
+        
+        this.load();
+        // Reload dashboard to update charts
+        if (typeof Dashboard !== 'undefined' && AppState.currentPage === 'dashboard') Dashboard.load();
+      } else {
+        App.toast(result.error || "Failed to process bulk stock out.", 'danger');
+      }
+    } catch (err) {
+      App.hideLoading();
+      App.toast("Network error during execution.", 'danger');
+    }
   }
 };
