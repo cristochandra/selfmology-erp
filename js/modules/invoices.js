@@ -81,9 +81,18 @@ const Invoices = {
     const lineResult = await API.call('getLineItems', { Invoice_ID: invoiceId });
     const lines = lineResult.success ? lineResult.data : [];
 
-    const netTotal = this._calcNet(inv);
-    const discType = inv.Discount_Type || 'fixed';
-    const discLabel = discType === 'percentage' ? `${inv.Discount_Value}%` : App.formatCurrency(inv.Discount_Value || 0);
+    let grossSubtotal = 0;
+    let totalDiscount = 0;
+    lines.forEach(l => {
+      const grossLine = (Number(l.Quantity) || 0) * (Number(l.Unit_Price) || 0);
+      const netLine = Number(l.Line_Total) || 0;
+      grossSubtotal += grossLine;
+      if (grossLine > netLine) {
+        totalDiscount += (grossLine - netLine);
+      }
+    });
+    const netTotal = Number(inv.Total_Amount) || 0;
+    const displayGrossSubtotal = grossSubtotal > 0 ? grossSubtotal : netTotal;
 
     let html = `
       <h3 class="modal-title">${inv.Invoice_ID}</h3>
@@ -113,17 +122,17 @@ const Invoices = {
               ${lines.map(l => {
                 const product = App.getProductBySKU(l.SKU);
                 const productName = product ? product.Product_Name : '-';
-                let finalUnitPrice = l.Unit_Price;
+                const grossLineTotal = (Number(l.Quantity) || 0) * (Number(l.Unit_Price) || 0);
+                const netLineTotal = Number(l.Line_Total) || 0;
+                const lineDiscAmount = grossLineTotal - netLineTotal;
+                const hasDiscount = lineDiscAmount > 0.01;
+                
                 let priceDisplay = App.formatCurrency(l.Unit_Price);
                 let afterDiscDisplay = '-';
                 
-                if (l.Discount_Value > 0) {
+                if (hasDiscount) {
                   priceDisplay = `<span style="text-decoration:line-through; color:var(--text-secondary);">${App.formatCurrency(l.Unit_Price)}</span>`;
-                  if (l.Discount_Type === 'percentage') {
-                    finalUnitPrice = l.Unit_Price - (l.Unit_Price * (l.Discount_Value / 100));
-                  } else {
-                    finalUnitPrice = l.Unit_Price - l.Discount_Value;
-                  }
+                  const finalUnitPrice = netLineTotal / (Number(l.Quantity) || 1);
                   afterDiscDisplay = App.formatCurrency(finalUnitPrice);
                 }
                 return `
@@ -139,7 +148,15 @@ const Invoices = {
             </tbody>
           </table>
         </div>
-        <div class="flex-between" style="padding-top:12px;border-top:2px solid var(--text-primary); margin-top:8px;">
+        <div class="flex-between" style="padding-top:12px; margin-top:8px;">
+          <span class="text-sm text-secondary">Subtotal</span>
+          <span class="text-sm">${App.formatCurrency(displayGrossSubtotal)}</span>
+        </div>
+        <div class="flex-between">
+          <span class="text-sm text-secondary">Total Discount</span>
+          <span class="text-sm" style="color:var(--color-red);">-${App.formatCurrency(totalDiscount)}</span>
+        </div>
+        <div class="flex-between" style="padding-top:8px;border-top:2px solid var(--text-primary); margin-top:4px;">
           <span class="text-sm text-bold">Net Total</span>
           <span class="text-sm text-bold" style="font-size:16px;">${App.formatCurrency(inv.Total_Amount)}</span>
         </div>
@@ -545,8 +562,18 @@ const Invoices = {
     const lineResult = await API.call('getLineItems', { Invoice_ID: invoiceId });
     const lines = lineResult.success ? lineResult.data : [];
     const netTotal = this._calcNet(inv);
-    const discType = inv.Discount_Type || 'fixed';
-    const discLabel = discType === 'percentage' ? `${inv.Discount_Value}%` : App.formatCurrency(inv.Discount_Value || 0);
+    
+    let grossSubtotal = 0;
+    let totalDiscount = 0;
+    lines.forEach(l => {
+      const grossLine = (Number(l.Quantity) || 0) * (Number(l.Unit_Price) || 0);
+      const netLine = Number(l.Line_Total) || 0;
+      grossSubtotal += grossLine;
+      if (grossLine > netLine) {
+        totalDiscount += (grossLine - netLine);
+      }
+    });
+    const displayGrossSubtotal = grossSubtotal > 0 ? grossSubtotal : netTotal;
 
     const printDiv = document.getElementById('invoice-print');
     printDiv.innerHTML = `
@@ -603,17 +630,17 @@ const Invoices = {
               const product = App.getProductBySKU(l.SKU);
               const pName = product ? product.Product_Name : '-';
               
+              const grossLineTotal = (Number(l.Quantity) || 0) * (Number(l.Unit_Price) || 0);
+              const netLineTotal = Number(l.Line_Total) || 0;
+              const lineDiscAmount = grossLineTotal - netLineTotal;
+              const hasDiscount = lineDiscAmount > 0.01;
+              
               let originalPriceDisplay = App.formatCurrency(l.Unit_Price);
-              let finalUnitPrice = l.Unit_Price;
               let afterDiscDisplay = '-';
               
-              if (l.Discount_Value > 0) {
+              if (hasDiscount) {
                 originalPriceDisplay = `<span style="text-decoration:line-through; color:#9CA3AF;">${App.formatCurrency(l.Unit_Price)}</span>`;
-                if (l.Discount_Type === 'percentage') {
-                  finalUnitPrice = l.Unit_Price - (l.Unit_Price * (l.Discount_Value / 100));
-                } else {
-                  finalUnitPrice = l.Unit_Price - l.Discount_Value;
-                }
+                const finalUnitPrice = netLineTotal / (Number(l.Quantity) || 1);
                 afterDiscDisplay = `<span style="color:#10B981;">${App.formatCurrency(finalUnitPrice)}</span>`;
               }
 
@@ -647,11 +674,11 @@ const Invoices = {
           <div style="width:250px;">
             <div style="display:flex; justify-content:space-between; padding:8px 0; font-size:14px;">
               <span style="color:#6B7280;">Subtotal</span>
-              <span style="font-weight:500;">${App.formatCurrency(inv.Total_Amount)}</span>
+              <span style="font-weight:500;">${App.formatCurrency(displayGrossSubtotal)}</span>
             </div>
             <div style="display:flex; justify-content:space-between; padding:8px 0; font-size:14px;">
               <span style="color:#6B7280;">Discount</span>
-              <span style="color:#EF4444;">-${discLabel}</span>
+              <span style="color:#EF4444;">-${App.formatCurrency(totalDiscount)}</span>
             </div>
             <div style="display:flex; justify-content:space-between; padding:16px 0; font-size:20px; font-weight:800; border-top:2px solid #1A1A2E; margin-top:8px;">
               <span>Total</span>
