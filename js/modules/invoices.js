@@ -80,39 +80,47 @@ const Invoices = {
 
     const lineResult = await API.call('getLineItems', { Invoice_ID: invoiceId });
     const lines = lineResult.success ? lineResult.data : [];
-
-    let grossSubtotal = 0;
-    let computedLineDiscounts = 0;
-    lines.forEach(l => {
-      const uPrice = Number(l.Unit_Price) || 0;
-      const q = Number(l.Quantity) || 1;
-      grossSubtotal += uPrice * q;
-      
-      let uDisc = 0;
-      if (Number(l.Discount_Value) > 0) {
-        uDisc = l.Discount_Type === 'percentage' ? uPrice * (Number(l.Discount_Value) / 100) : Number(l.Discount_Value);
-        if (uDisc > uPrice) uDisc = uDisc / q;
-      } else if (Number(l.Discount) > 0) {
-        uDisc = Number(l.Discount) / q;
-      } else {
-        const lt = Number(l.Line_Total) || 0;
-        if (lt > 0 && lt < uPrice * q) {
-          uDisc = ((uPrice * q) - lt) / q;
-        }
-      }
-      if (uDisc > 0.01 && uDisc < uPrice) {
-        computedLineDiscounts += uDisc * q;
-      }
-    });
     const netTotal = Number(inv.Total_Amount) || 0;
-    
-    let headerDiscVal = Number(inv.Discount_Value) || 0;
-    if (inv.Discount_Type === 'percentage' && netTotal > 0) {
-      const d = Math.min(headerDiscVal, 99);
-      headerDiscVal = (netTotal / (1 - d/100)) - netTotal;
-    }
-    const finalGrossSubtotal = grossSubtotal > 0 ? grossSubtotal : (netTotal + headerDiscVal);
-    const finalTotalDiscount = computedLineDiscounts > 0 ? computedLineDiscounts : Math.max(0, finalGrossSubtotal - netTotal);
+
+    // Helper: compute per-unit nominal discount for a line item
+    const getUnitDisc = (l) => {
+      const up = Number(l.Unit_Price) || 0;
+      const q  = Number(l.Quantity)  || 1;
+      const dv = Number(l.Discount_Value);
+      const dt = l.Discount_Type || 'fixed';
+      const d  = Number(l.Discount); // total discount stored by backend
+
+      if (dv > 0) {
+        // Discount_Value is per-unit nominal for fixed, or % rate for percentage
+        const uDisc = dt === 'percentage' ? up * (dv / 100) : dv;
+        return uDisc < up ? uDisc : 0;
+      }
+      if (d > 0) {
+        // Discount column = Discount_Value * Qty (per backend line 359)
+        // So per-unit = d / q
+        const uDisc = d / q;
+        return uDisc < up ? uDisc : 0;
+      }
+      // Fallback: infer from Line_Total
+      const lt = Number(l.Line_Total);
+      if (lt > 0 && lt < up * q) {
+        return (up * q - lt) / q;
+      }
+      return 0;
+    };
+
+    // Build row data
+    const rows = lines.map(l => {
+      const up   = Number(l.Unit_Price) || 0;
+      const q    = Number(l.Quantity)   || 1;
+      const uDisc = getUnitDisc(l);
+      const finalUp = up - uDisc;             // After Disc unit price
+      const rowTotal = finalUp * q;           // Total column
+      return { l, up, q, uDisc, finalUp, rowTotal };
+    });
+
+    // Subtotal = sum of all rowTotals (what's actually charged)
+    const tableSubtotal = rows.reduce((s, r) => s + r.rowTotal, 0);
 
     let html = `
       <h3 class="modal-title">${inv.Invoice_ID}</h3>
@@ -139,45 +147,26 @@ const Invoices = {
           <table class="data-table">
             <thead><tr><th>SKU</th><th>Product</th><th>Qty</th><th>Price</th><th>After Disc</th><th>Total</th></tr></thead>
             <tbody>
-              ${lines.map(l => {
+              ${rows.map(({ l, up, q, uDisc, finalUp, rowTotal }) => {
                 const product = App.getProductBySKU(l.SKU);
                 const productName = product ? product.Product_Name : '-';
-                
-                const origUnitPrice = Number(l.Unit_Price) || 0;
-                const qty = Number(l.Quantity) || 1;
-                
-                let nominalUnitDisc = 0;
-                if (Number(l.Discount_Value) > 0) {
-                  nominalUnitDisc = l.Discount_Type === 'percentage' ? origUnitPrice * (Number(l.Discount_Value) / 100) : Number(l.Discount_Value);
-                  if (nominalUnitDisc > origUnitPrice) nominalUnitDisc = nominalUnitDisc / qty;
-                } else if (Number(l.Discount) > 0) {
-                  nominalUnitDisc = Number(l.Discount) / qty;
-                } else {
-                  const grossL = origUnitPrice * qty;
-                  const lt = Number(l.Line_Total) || 0;
-                  if (lt > 0 && lt < grossL) {
-                    nominalUnitDisc = (grossL - lt) / qty;
-                  }
-                }
-                
-                const hasDiscount = nominalUnitDisc > 0.01 && nominalUnitDisc < origUnitPrice;
-                const finalUnitPrice = origUnitPrice - nominalUnitDisc;
-                const rowTotal = hasDiscount ? (finalUnitPrice * qty) : (origUnitPrice * qty);
-                
-                let priceDisplay = App.formatCurrency(origUnitPrice);
-                let afterDiscDisplay = '-';
-                
-                if (hasDiscount) {
-                  priceDisplay = `<span style="text-decoration:line-through; color:var(--text-secondary);">${App.formatCurrency(origUnitPrice)}</span>`;
-                  afterDiscDisplay = App.formatCurrency(finalUnitPrice);
-                }
+                const hasDiscount = uDisc > 0.01;
+
+                const priceDisplay = hasDiscount
+                  ? `<span style="text-decoration:line-through; color:var(--text-secondary);">${App.formatCurrency(up)}</span>`
+                  : App.formatCurrency(up);
+
+                const afterDiscDisplay = hasDiscount
+                  ? `<span style="color:var(--color-primary); font-weight:bold;">${App.formatCurrency(finalUp)}</span>`
+                  : '<span style="color:var(--text-secondary);">-</span>';
+
                 return `
                   <tr>
                     <td>${l.SKU}</td>
                     <td style="white-space:normal;max-width:100px;">${productName}</td>
-                    <td>${l.Quantity}</td>
+                    <td>${q}</td>
                     <td>${priceDisplay}</td>
-                    <td style="color:var(--color-primary); font-weight:bold;">${afterDiscDisplay}</td>
+                    <td>${afterDiscDisplay}</td>
                     <td>${App.formatCurrency(rowTotal)}</td>
                   </tr>`;
               }).join('')}
@@ -186,11 +175,7 @@ const Invoices = {
         </div>
         <div class="flex-between" style="padding-top:12px; margin-top:8px;">
           <span class="text-sm text-secondary">Subtotal</span>
-          <span class="text-sm">${App.formatCurrency(finalGrossSubtotal)}</span>
-        </div>
-        <div class="flex-between">
-          <span class="text-sm text-secondary">Total Discount</span>
-          <span class="text-sm" style="color:var(--color-red);">-${App.formatCurrency(finalTotalDiscount)}</span>
+          <span class="text-sm">${App.formatCurrency(tableSubtotal)}</span>
         </div>
         <div class="flex-between" style="padding-top:8px;border-top:2px solid var(--text-primary); margin-top:4px;">
           <span class="text-sm text-bold">Net Total</span>
@@ -594,42 +579,41 @@ const Invoices = {
 
     const inv = this.invoices.find(i => i.Invoice_ID === invoiceId);
     if (!inv) return;
-
     const lineResult = await API.call('getLineItems', { Invoice_ID: invoiceId });
     const lines = lineResult.success ? lineResult.data : [];
     const netTotal = this._calcNet(inv);
-    
-    let grossSubtotal = 0;
-    let computedLineDiscounts = 0;
-    lines.forEach(l => {
-      const uPrice = Number(l.Unit_Price) || 0;
-      const q = Number(l.Quantity) || 1;
-      grossSubtotal += uPrice * q;
-      
-      let uDisc = 0;
-      if (Number(l.Discount_Value) > 0) {
-        uDisc = l.Discount_Type === 'percentage' ? uPrice * (Number(l.Discount_Value) / 100) : Number(l.Discount_Value);
-        if (uDisc > uPrice) uDisc = uDisc / q;
-      } else if (Number(l.Discount) > 0) {
-        uDisc = Number(l.Discount) / q;
-      } else {
-        const lt = Number(l.Line_Total) || 0;
-        if (lt > 0 && lt < uPrice * q) {
-          uDisc = ((uPrice * q) - lt) / q;
-        }
+
+    // Helper: per-unit discount (same logic as showDetail)
+    const getUnitDiscP = (l) => {
+      const up = Number(l.Unit_Price) || 0;
+      const q  = Number(l.Quantity)  || 1;
+      const dv = Number(l.Discount_Value);
+      const dt = l.Discount_Type || 'fixed';
+      const d  = Number(l.Discount);
+      if (dv > 0) {
+        const uDisc = dt === 'percentage' ? up * (dv / 100) : dv;
+        return uDisc < up ? uDisc : 0;
       }
-      if (uDisc > 0.01 && uDisc < uPrice) {
-        computedLineDiscounts += uDisc * q;
+      if (d > 0) {
+        const uDisc = d / q;
+        return uDisc < up ? uDisc : 0;
       }
+      const lt = Number(l.Line_Total);
+      if (lt > 0 && lt < up * q) return (up * q - lt) / q;
+      return 0;
+    };
+
+    const pRows = lines.map(l => {
+      const up = Number(l.Unit_Price) || 0;
+      const q  = Number(l.Quantity)   || 1;
+      const uDisc = getUnitDiscP(l);
+      const finalUp = up - uDisc;
+      const rowTotal = finalUp * q;
+      return { l, up, q, uDisc, finalUp, rowTotal };
     });
-    
-    let headerDiscVal = Number(inv.Discount_Value) || 0;
-    if (inv.Discount_Type === 'percentage' && netTotal > 0) {
-      const d = Math.min(headerDiscVal, 99);
-      headerDiscVal = (netTotal / (1 - d/100)) - netTotal;
-    }
-    const finalGrossSubtotal = grossSubtotal > 0 ? grossSubtotal : (netTotal + headerDiscVal);
-    const finalTotalDiscount = computedLineDiscounts > 0 ? computedLineDiscounts : Math.max(0, finalGrossSubtotal - netTotal);
+
+    // Subtotal = sum of all row totals in the table
+    const tableSubtotalPrint = pRows.reduce((s, r) => s + r.rowTotal, 0);
 
     const printDiv = document.getElementById('invoice-print');
     printDiv.innerHTML = `
@@ -682,38 +666,18 @@ const Invoices = {
             </tr>
           </thead>
           <tbody>
-            ${lines.map(l => {
+            ${pRows.map(({ l, up, q, uDisc, finalUp, rowTotal }) => {
               const product = App.getProductBySKU(l.SKU);
               const pName = product ? product.Product_Name : '-';
-              
-              const origUnitPrice = Number(l.Unit_Price) || 0;
-              const qty = Number(l.Quantity) || 1;
-              
-              let nominalUnitDisc = 0;
-              if (Number(l.Discount_Value) > 0) {
-                nominalUnitDisc = l.Discount_Type === 'percentage' ? origUnitPrice * (Number(l.Discount_Value) / 100) : Number(l.Discount_Value);
-                if (nominalUnitDisc > origUnitPrice) nominalUnitDisc = nominalUnitDisc / qty;
-              } else if (Number(l.Discount) > 0) {
-                nominalUnitDisc = Number(l.Discount) / qty;
-              } else {
-                const grossL = origUnitPrice * qty;
-                const lt = Number(l.Line_Total) || 0;
-                if (lt > 0 && lt < grossL) {
-                  nominalUnitDisc = (grossL - lt) / qty;
-                }
-              }
-              
-              const hasDiscount = nominalUnitDisc > 0.01 && nominalUnitDisc < origUnitPrice;
-              const finalUnitPrice = origUnitPrice - nominalUnitDisc;
-              const rowTotal = hasDiscount ? (finalUnitPrice * qty) : (origUnitPrice * qty);
-              
-              let originalPriceDisplay = App.formatCurrency(origUnitPrice);
-              let afterDiscDisplay = '-';
-              
-              if (hasDiscount) {
-                originalPriceDisplay = `<span style="text-decoration:line-through; color:#9CA3AF;">${App.formatCurrency(origUnitPrice)}</span>`;
-                afterDiscDisplay = `<span style="color:#10B981;">${App.formatCurrency(finalUnitPrice)}</span>`;
-              }
+              const hasDiscount = uDisc > 0.01;
+
+              const origPriceDisplay = hasDiscount
+                ? `<span style="text-decoration:line-through; color:#9CA3AF;">${App.formatCurrency(up)}</span>`
+                : App.formatCurrency(up);
+
+              const afterDiscDisplay = hasDiscount
+                ? `<span style="color:#10B981; font-weight:600;">${App.formatCurrency(finalUp)}</span>`
+                : '-';
 
               return `
                 <tr style="border-bottom:1px solid #E5E7EB;">
@@ -721,9 +685,9 @@ const Invoices = {
                     <div style="font-size:14px; font-weight:600;">${pName}</div>
                     <div style="font-size:11px; color:#9CA3AF; margin-top:2px;">SKU: ${l.SKU}</div>
                   </td>
-                  <td style="text-align:right; padding:16px 8px; font-size:14px;">${l.Quantity}</td>
-                  <td style="text-align:right; padding:16px 8px; font-size:14px;">${originalPriceDisplay}</td>
-                  <td style="text-align:right; padding:16px 8px; font-size:14px; font-weight:600;">${afterDiscDisplay}</td>
+                  <td style="text-align:right; padding:16px 8px; font-size:14px;">${q}</td>
+                  <td style="text-align:right; padding:16px 8px; font-size:14px;">${origPriceDisplay}</td>
+                  <td style="text-align:right; padding:16px 8px; font-size:14px;">${afterDiscDisplay}</td>
                   <td style="text-align:right; padding:16px 8px; font-size:14px; font-weight:600;">${App.formatCurrency(rowTotal)}</td>
                 </tr>`;
             }).join('')}
@@ -745,11 +709,7 @@ const Invoices = {
           <div style="width:250px;">
             <div style="display:flex; justify-content:space-between; padding:8px 0; font-size:14px;">
               <span style="color:#6B7280;">Subtotal</span>
-              <span style="font-weight:500;">${App.formatCurrency(finalGrossSubtotal)}</span>
-            </div>
-            <div style="display:flex; justify-content:space-between; padding:8px 0; font-size:14px;">
-              <span style="color:#6B7280;">Discount</span>
-              <span style="color:#EF4444;">-${App.formatCurrency(finalTotalDiscount)}</span>
+              <span style="font-weight:500;">${App.formatCurrency(tableSubtotalPrint)}</span>
             </div>
             <div style="display:flex; justify-content:space-between; padding:16px 0; font-size:20px; font-weight:800; border-top:2px solid #1A1A2E; margin-top:8px;">
               <span>Total</span>
