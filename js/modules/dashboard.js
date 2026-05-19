@@ -86,9 +86,6 @@ const Dashboard = {
     // Top Selling Chart
     this.renderTopSelling(d.topSelling);
 
-    // Low Stock Alerts
-    this.renderLowStock(d.lowStockItems);
-
     // Stock Table
     this.renderStockTable(d.stockDetails);
 
@@ -125,31 +122,7 @@ const Dashboard = {
     `).join('');
   },
 
-  renderLowStock(items) {
-    const container = document.getElementById('low-stock-list');
-    if (!items || items.length === 0) {
-      container.innerHTML = `
-        <div class="empty-state">
-          <div class="empty-state-icon">✅</div>
-          <p class="empty-state-title">All Good!</p>
-          <p class="empty-state-text">No low stock items</p>
-        </div>`;
-      return;
-    }
 
-    container.innerHTML = items.map(item => `
-      <div class="list-item">
-        <div class="list-item-icon" style="background:var(--color-red-light);">⚠️</div>
-        <div class="list-item-content">
-          <div class="list-item-title">${item.Product_Name}</div>
-          <div class="list-item-meta">${item.SKU}</div>
-        </div>
-        <div>
-          <span class="badge badge-low-stock">${item.currentStock} left</span>
-        </div>
-      </div>
-    `).join('');
-  },
 
   renderStockTable(items) {
     const tbody = document.getElementById('stock-table-body');
