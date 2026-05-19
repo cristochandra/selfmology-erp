@@ -241,18 +241,44 @@ const Inventory = {
       return;
     }
 
-    container.innerHTML = all.map(row => `
+    container.innerHTML = all.map(row => {
+      // Look up product name from master data if missing
+      let pName = row.Product_Name || '';
+      if (!pName && row.SKU) {
+        const prod = AppState.masterData.find(p => String(p.SKU).trim() === String(row.SKU).trim());
+        if (prod) pName = prod.Product_Name;
+      }
+      
+      // Determine colors and character based on type and reason
+      let iconColor = 'var(--color-red)';
+      let iconBg = 'var(--color-red-light)';
+      let iconChar = '↑';
+      
+      const isMove = (row.Reason && row.Reason.includes('Stock Move')) || (row.Reference_ID && String(row.Reference_ID).startsWith('MOVE-'));
+      
+      if (isMove) {
+        iconColor = 'var(--color-primary)';
+        iconBg = 'var(--color-primary-light)';
+        iconChar = '⇄';
+      } else if (row.type === 'IN') {
+        iconColor = 'var(--color-mint)';
+        iconBg = 'var(--color-mint-light)';
+        iconChar = '↓';
+      }
+      
+      return `
       <div class="list-item">
-        <div class="list-item-icon ${row.type === 'IN' ? 'text-success' : 'text-danger'}" style="background: var(--bg-secondary);">
-          ${row.type === 'IN' ? '↓' : '↑'}
+        <div class="list-item-icon" style="background: ${iconBg}; color: ${iconColor}; font-weight: bold; font-size: 16px; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; border-radius: 50%;">
+          ${iconChar}
         </div>
         <div class="list-item-content">
-          <div class="list-item-title">${row.SKU} · ${row.Product_Name || ''}</div>
+          <div class="list-item-title">${row.SKU} · ${pName}</div>
           <div class="list-item-meta">${row.date} · ${row.type === 'IN' ? 'Inbound' : (row.Reason || 'Outbound')} · <strong>${row.qty}</strong></div>
-          <div style="font-size: 10px; color: var(--text-tertiary);">Batch: ${row.Batch_Number || '-'} · ${row.Warehouse_Type || 'Warehouse'}</div>
+          <div style="font-size: 10px; color: var(--text-tertiary);">Batch: ${row.Batch_Number || '-'} · ${row.Warehouse_Type || 'Warehouse'} · Ref: ${row.Reference_ID || '-'}</div>
         </div>
       </div>
-    `).join('');
+      `;
+    }).join('');
   },
 
   bindCSV() {
@@ -272,13 +298,84 @@ const Inventory = {
   assignBatchFIFO(sku, qtyNeeded) {
     // We deep clone summary locally in processUpload, but assignBatchFIFO is called there.
     // It's safer to pass the active summary map so preview doesn't permanently modify it until confirm.
-    return []; // We'll handle this in processUpload
-  },
-
-  processUpload(file) {
+    return []; // We'll handle this in pr  processUpload(file) {
     if (!file) return;
     App.showLoading();
     
+    // Helpers for product matching and multiplier logic
+    const extractMultiplier = (text) => {
+      if (!text) return 1;
+      const lower = text.toLowerCase();
+      const pcsMatch = lower.match(/\b(\d+)\s*(?:pcs|pc|botol|pack|box)\b/) || lower.match(/\bx\s*(\d+)\b/);
+      if (pcsMatch) {
+        return Number(pcsMatch[1]) || 1;
+      }
+      if (lower.includes('triple')) return 3;
+      if (lower.includes('twin') || lower.includes('double')) return 2;
+      return 1;
+    };
+
+    const matchProduct = (rawName, masterData) => {
+      const lowerName = rawName.toLowerCase();
+      
+      // 1. Direct contains check
+      const directMatch = masterData.find(mp => 
+        lowerName.includes(mp.Product_Name.toLowerCase()) ||
+        mp.Product_Name.toLowerCase().includes(lowerName)
+      );
+      if (directMatch) return directMatch;
+      
+      // 2. Normalized check (ignoring spaces, punctuation, special chars like +)
+      const normalize = (str) => String(str || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      const normName = normalize(rawName);
+      if (normName.length > 3) {
+        const normMatch = masterData.find(mp => {
+          const normMP = normalize(mp.Product_Name);
+          return normName.includes(normMP) || normMP.includes(normName);
+        });
+        if (normMatch) return normMatch;
+      }
+      
+      // 3. Specific keyword mappings based on Selfmology product lines
+      if (lowerName.includes('cleanser')) {
+        const p = masterData.find(mp => mp.SKU === 'SM-CLN-001');
+        if (p) return p;
+      }
+      if (lowerName.includes('toner')) {
+        const p = masterData.find(mp => mp.SKU === 'SM-TNR-001');
+        if (p) return p;
+      }
+      if (lowerName.includes('serum')) {
+        const p = masterData.find(mp => mp.SKU === 'SM-SRM-001');
+        if (p) return p;
+      }
+      if (lowerName.includes('moisturizer') || lowerName.includes('moist')) {
+        const p = masterData.find(mp => mp.SKU === 'SM-MST-001');
+        if (p) return p;
+      }
+      if (lowerName.includes('mask')) {
+        const p = masterData.find(mp => mp.SKU === 'SM-MSK-001');
+        if (p) return p;
+      }
+      if (lowerName.includes('eye')) {
+        const p = masterData.find(mp => mp.SKU === 'SM-EYE-001');
+        if (p) return p;
+      }
+      if (lowerName.includes('sunscreen') || lowerName.includes('uv shield') || lowerName.includes('uvshield')) {
+        const p = masterData.find(mp => mp.SKU === 'SM-UVS-025');
+        if (p) return p;
+      }
+      
+      // 4. Keyword overlapping match fallback
+      for (const mp of masterData) {
+        const keywords = mp.Product_Name.toLowerCase().split(/\s+/).filter(k => k.length > 2 && k !== 'pack' && k !== 'shield');
+        if (keywords.length > 0 && keywords.every(k => lowerName.includes(k))) {
+          return mp;
+        }
+      }
+      return null;
+    };
+
     // Create a deep copy of summary to simulate FIFO for the preview without touching real stock yet
     const localSummary = JSON.parse(JSON.stringify(this.summary));
     
@@ -326,61 +423,55 @@ const Inventory = {
         }
 
         const outRows = [];
+        const rawSales = [];
         const recapMap = {};
         let minDate = null;
         let maxDate = null;
+        let skippedDuplicates = 0;
         
         // Sort master products by length descending so more specific names take priority
         const sortedMaster = [...AppState.masterData].sort((a, b) => b.Product_Name.length - a.Product_Name.length);
         
         for (const row of rawJson) {
-          // Status check: ignore cancelled or pending/unpaid orders
-          const status = String(row['Status Pesanan'] || row['Order Status'] || '').toLowerCase();
-          if (status.includes('batal') || status.includes('pending') || status.includes('belum') || status.includes('unpaid')) {
-            continue; // Skip cancelled or unconfirmed/pending orders
+          // Status check: whitelist successful/completed/shipped orders
+          const status = String(row['Status Pesanan'] || row['Order Status'] || '').toLowerCase().trim();
+          const allowedStatuses = ['selesai', 'completed', 'dikirim', 'shipped'];
+          const isAllowed = allowedStatuses.some(s => status.includes(s));
+          if (!isAllowed) {
+            continue; // Skip cancelled/unpaid/pending/other orders
           }
           
           // Rely on Product Name matching against Master Product Data instead of SKU
           const rawName = String(row['Nama Produk'] || row['Product Name'] || row['Nama Variasi'] || '').trim();
           if (!rawName) continue;
-          const lowerName = rawName.toLowerCase();
           
-          let matchedProduct = null;
-          for (const mp of sortedMaster) {
-            if (lowerName.includes(mp.Product_Name.toLowerCase())) {
-              matchedProduct = mp;
-              break;
-            }
-          }
-          
-          // Fallback keyword matching if direct substring fails
-          if (!matchedProduct) {
-            for (const mp of sortedMaster) {
-              const keywords = mp.Product_Name.toLowerCase().split(/\s+/).filter(k => k.length > 2);
-              const hasAll = keywords.length > 0 && keywords.every(k => lowerName.includes(k));
-              if (hasAll) {
-                matchedProduct = mp;
-                break;
-              }
-            }
-          }
-
+          const matchedProduct = matchProduct(rawName, sortedMaster);
           if (!matchedProduct) {
             continue; // Skip items that don't match any Master Product
+          }
+          
+          const refId = String(row['No. Pesanan'] || row['Order ID'] || '').trim();
+          
+          // Check for duplicate imports against current database
+          if (refId) {
+            const isAlreadyInDB = this.outData && this.outData.some(existing => String(existing.Reference_ID).trim() === refId);
+            if (isAlreadyInDB) {
+              skippedDuplicates++;
+              continue; // Skip duplicate order
+            }
           }
           
           const sku = matchedProduct.SKU;
           const productName = matchedProduct.Product_Name;
 
-          const variasi = String(row['Nama Variasi'] || row['Variation Name'] || '').toLowerCase();
-          let multiplier = 1;
-          if (variasi.includes('triple')) multiplier = 3;
-          else if (variasi.includes('twin')) multiplier = 2;
+          const variasi = String(row['Nama Variasi'] || row['Variation Name'] || '').trim();
+          const prodMultiplier = extractMultiplier(rawName);
+          const varMultiplier = extractMultiplier(variasi);
+          const multiplier = varMultiplier > 1 ? varMultiplier : prodMultiplier;
           
           const rawQty = Number(row['Jumlah'] || row['Quantity'] || 1) || 1;
           const totalQty = rawQty * multiplier;
           
-          const refId = String(row['No. Pesanan'] || row['Order ID'] || '').trim();
           let dateStr = String(row['Waktu Pesanan Dibuat'] || row['Order Creation Date'] || '').trim();
           if (dateStr.length >= 10) dateStr = dateStr.substring(0, 10);
           else dateStr = App.todayStr();
@@ -403,6 +494,43 @@ const Inventory = {
           const valStr = String(row['Total Harga Produk'] || row['Total Pembayaran'] || '0').replace(/\./g, '');
           const netVal = Number(valStr.replace(/[^0-9]/g, '')) || 0;
           recapMap[sku].totalValue += netVal;
+
+          // Detect Channel
+          let channel = 'Online';
+          const keys = Object.keys(row);
+          const firstKeyStr = JSON.stringify(keys).toLowerCase();
+          if (firstKeyStr.includes('shopee')) {
+            channel = 'Shopee';
+          } else if (firstKeyStr.includes('tokopedia')) {
+            channel = 'Tokopedia';
+          } else if (firstKeyStr.includes('tiktok')) {
+            channel = 'TikTok Shop';
+          } else if (row['No. Pesanan'] && String(row['No. Pesanan']).startsWith('2')) {
+            channel = 'Shopee';
+          } else if (row['Nomor Invoice'] || String(row['Order ID'] || '').startsWith('INV')) {
+            channel = 'Tokopedia';
+          }
+
+          // Extract Price
+          const rawPrice = String(row['Harga Awal'] || row['Harga Setelah Diskon'] || row['Original Price'] || '0').replace(/\./g, '');
+          const unitPrice = Number(rawPrice.replace(/[^0-9]/g, '')) || 0;
+          const carrier = String(row['Opsi Pengiriman'] || row['Courier'] || row['Jasa Kirim'] || '').trim();
+
+          // Push raw sales detail
+          rawSales.push({
+            Order_ID: refId,
+            Date: dateStr,
+            Channel: channel,
+            SKU: sku,
+            Product_Name: productName,
+            Variation_Name: variasi,
+            Quantity: totalQty,
+            Raw_Quantity: rawQty,
+            Price: unitPrice,
+            Total_Price: netVal,
+            Status: row['Status Pesanan'] || row['Order Status'] || 'Completed',
+            Shipping_Carrier: carrier
+          });
 
           // Apply FIFO logic using local summary
           const batchAssignments = assignBatchFIFOLocal(sku, totalQty);
@@ -427,13 +555,18 @@ const Inventory = {
 
         if (outRows.length === 0 || recapItems.length === 0) {
           App.hideLoading();
-          App.toast("No valid completed sales items matching Master Products found.", "info");
+          let msg = "No valid completed sales items matching Master Products found.";
+          if (skippedDuplicates > 0) {
+            msg += ` (${skippedDuplicates} duplicate rows were skipped)`;
+          }
+          App.toast(msg, "info");
           document.getElementById('csv-file-input').value = '';
           return;
         }
 
         // Store globally for confirmation
         this.pendingOutRows = outRows;
+        this.pendingRawSales = rawSales;
         
         // Render Grouped Recap Preview
         const previewEl = document.getElementById('csv-preview');
@@ -441,7 +574,17 @@ const Inventory = {
         const dateRangeDisplay = (minDate && maxDate && minDate !== maxDate) ? `${minDate} to ${maxDate}` : (minDate || App.todayStr());
 
         if (previewEl && importBtn) {
+          let duplicateWarning = '';
+          if (skippedDuplicates > 0) {
+            duplicateWarning = `
+              <div style="background: var(--color-orange-light); border-left: 4px solid var(--color-orange); padding: 12px 16px; border-radius: 6px; margin-bottom: 16px; font-size: 12px; color: var(--color-orange); line-height: 1.5; font-weight: 500;">
+                ⚠️ <strong>Duplicate Prevention:</strong> ${skippedDuplicates} transaction lines in this file were skipped because they have already been imported previously.
+              </div>
+            `;
+          }
+
           previewEl.innerHTML = `
+            ${duplicateWarning}
             <div style="background:var(--bg-secondary); padding:12px 16px; border-radius:8px; margin-bottom:16px; display:flex; justify-content:space-between; align-items:center;">
               <div>
                 <div style="font-size:11px; color:var(--text-tertiary); text-transform:uppercase; font-weight:600;">Date Range</div>
@@ -507,20 +650,22 @@ const Inventory = {
     reader.readAsArrayBuffer(file);
   },
 
-
-
   async confirmUpload() {
     if (!this.pendingOutRows || this.pendingOutRows.length === 0) return;
     
     App.showLoading();
     try {
-      const result = await API.call('bulkAddInventoryOut', { rows: this.pendingOutRows });
+      const result = await API.call('bulkAddInventoryOut', { 
+        rows: this.pendingOutRows,
+        rawSales: this.pendingRawSales || []
+      });
       App.hideLoading();
       if (result.success) {
         App.toast(`Successfully processed ${this.pendingOutRows.length} stock out transactions!`, 'success');
         
         // Reset preview
         this.pendingOutRows = null;
+        this.pendingRawSales = null;
         document.getElementById('csv-preview').classList.add('hidden');
         document.getElementById('csv-import-btn').classList.add('hidden');
         

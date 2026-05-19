@@ -26,10 +26,15 @@ const API = {
 
     App.showLoading();
     try {
-      // Use GET with URL params to avoid CORS preflight (GAS handles GET CORS-free)
-      const payload = encodeURIComponent(JSON.stringify({ action, data }));
-      const url = API_URL + '?payload=' + payload;
-      const response = await fetch(url, { redirect: 'follow' });
+      // Use POST with text/plain to avoid CORS preflight and bypass URL length limits
+      const response = await fetch(API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'text/plain'
+        },
+        body: JSON.stringify({ action, data }),
+        redirect: 'follow'
+      });
       const result = await response.json();
       if (!result.success) {
         App.toast(result.error || 'Something went wrong', 'error');

@@ -441,7 +441,7 @@ const DeliveryOrders = {
     const customerName = inv ? inv.Customer_Name : '';
 
     const invOut = invOutResult.success ? invOutResult.data : [];
-    const doItems = invOut.filter(o => o.Reference_ID === d.Invoice_ID);
+    const doItems = invOut.filter(o => o.Reference_ID === d.Invoice_ID || o.Reference_ID === d.DO_ID);
 
     const printDiv = document.getElementById('invoice-print');
     

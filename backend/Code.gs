@@ -15,7 +15,8 @@ const SHEETS = {
   DELIVERY_ORDERS: 'Delivery_Orders',
   EXPENSES: 'Expenses',
   USERS: 'Users',
-  CUSTOMERS: 'Customers'
+  CUSTOMERS: 'Customers',
+  ECOMMERCE_SALES: 'Ecommerce_Sales'
 };
 
 // ============================================================
@@ -143,6 +144,13 @@ function login(data) {
   if (!user) return { success: false, error: 'User not found.' };
   const hashed = simpleHash(password);
   if (user.Password && user.Password !== hashed) return { success: false, error: 'Invalid password.' };
+  
+  try {
+    setupDailyTrigger();
+  } catch (err) {
+    Logger.log('Daily trigger setup failed: ' + err.message);
+  }
+
   return { success: true, user: { userId: user.User_ID, email: user.Email, role: user.Role, name: user.Name || user.Email } };
 }
 
@@ -282,16 +290,52 @@ function moveStock(data) {
 function bulkAddInventoryOut(data) {
   const rows = data.rows || [];
   if (!rows.length) return { success: false, error: 'No rows provided.' };
+  
+  // 1. Write stock ledger deductions to Inventory_Out
   const sheet = getSheet(SHEETS.INVENTORY_OUT);
   const headers = ['Transaction_ID', 'Date', 'SKU', 'Quantity', 'Reason', 'Reference_ID', 'Batch_Number', 'Warehouse_Type'];
   const newRows = rows.map(row => {
     if (!row.Transaction_ID) row.Transaction_ID = generateId('OUT');
-    if (!row.Date) row.Date = formatDate();
+    if (!row.Date) row.Date = formatDate(row.Date);
     if (!row.Warehouse_Type) row.Warehouse_Type = 'Online Warehouse'; // CSV is for online
     row.Quantity = Number(row.Quantity) || 0;
-    return headers.map(h => row[h] || '');
+    return headers.map(h => row[h] !== undefined ? row[h] : '');
   });
-  if (newRows.length > 0) sheet.getRange(sheet.getLastRow() + 1, 1, newRows.length, headers.length).setValues(newRows);
+  if (newRows.length > 0) {
+    sheet.getRange(sheet.getLastRow() + 1, 1, newRows.length, headers.length).setValues(newRows);
+  }
+  
+  // 2. Write raw sales transactions to Ecommerce_Sales for future analysis
+  const rawSales = data.rawSales || [];
+  if (rawSales.length > 0) {
+    let salesSheet = getSheet(SHEETS.ECOMMERCE_SALES);
+    if (!salesSheet) {
+      const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+      salesSheet = ss.insertSheet(SHEETS.ECOMMERCE_SALES);
+    }
+    
+    // Define standard headers for ecommerce sales
+    const salesHeaders = [
+      'Order_ID', 'Date', 'Channel', 'SKU', 'Product_Name', 
+      'Variation_Name', 'Quantity', 'Raw_Quantity', 
+      'Price', 'Total_Price', 'Status', 'Shipping_Carrier',
+      'Import_Date'
+    ];
+    
+    // Check if sheet is brand new (needs headers)
+    if (salesSheet.getLastRow() === 0) {
+      salesSheet.getRange(1, 1, 1, salesHeaders.length).setValues([salesHeaders]);
+    }
+    
+    const importDateStr = formatDate(new Date());
+    const salesRows = rawSales.map(s => {
+      s.Import_Date = importDateStr;
+      return salesHeaders.map(h => s[h] !== undefined ? s[h] : '');
+    });
+    
+    salesSheet.getRange(salesSheet.getLastRow() + 1, 1, salesRows.length, salesHeaders.length).setValues(salesRows);
+  }
+  
   return { success: true, message: newRows.length + ' rows imported.', count: newRows.length };
 }
 
@@ -522,11 +566,11 @@ function executeDeliveryOrder(data) {
 
     if (data.items && data.items.length > 0) {
       data.items.forEach(li => {
-        newRows.push([generateId('OUT'), today, li.SKU, Number(li.Quantity) || 0, 'B2B Sales', invoiceId, li.Batch_Number || '', li.Warehouse_Type || 'Warehouse']);
+        newRows.push([generateId('OUT'), today, li.SKU, Number(li.Quantity) || 0, 'B2B Sales', data.DO_ID, li.Batch_Number || '', li.Warehouse_Type || 'Warehouse']);
       });
     } else {
       lineItems.forEach(li => {
-        newRows.push([generateId('OUT'), today, li.SKU, Number(li.Quantity) || 0, 'B2B Sales', invoiceId, '', 'Warehouse']);
+        newRows.push([generateId('OUT'), today, li.SKU, Number(li.Quantity) || 0, 'B2B Sales', data.DO_ID, '', 'Warehouse']);
       });
     }
 
@@ -547,12 +591,38 @@ function updatePaymentStatus(data) {
   const payIdx = headers.indexOf('Payment_Status');
   const proofIdx = headers.indexOf('Payment_Proof_URL');
   const dateIdx = headers.indexOf('Payment_Date');
+  const invIdx = headers.indexOf('Invoice_ID');
 
+  let invoiceId = '';
   for (let i = 1; i < allData.length; i++) {
     if (allData[i][idIdx] === data.DO_ID) {
       if (payIdx >= 0) sheet.getRange(i + 1, payIdx + 1).setValue(data.Payment_Status || 'Unpaid');
       if (proofIdx >= 0 && data.Payment_Proof_URL) sheet.getRange(i + 1, proofIdx + 1).setValue(data.Payment_Proof_URL);
       if (dateIdx >= 0 && data.Payment_Date !== undefined) sheet.getRange(i + 1, dateIdx + 1).setValue(data.Payment_Date);
+      
+      if (invIdx >= 0) {
+        invoiceId = allData[i][invIdx];
+      }
+      
+      // Sync payment status to Invoices sheet
+      if (invoiceId) {
+        const invSheet = getSheet(SHEETS.INVOICES);
+        if (invSheet) {
+          const invData = invSheet.getDataRange().getValues();
+          const invHeaders = invData[0];
+          const invIdIdx = invHeaders.indexOf('Invoice_ID');
+          const invPayIdx = invHeaders.indexOf('Payment_Status');
+          if (invIdIdx >= 0 && invPayIdx >= 0) {
+            for (let j = 1; j < invData.length; j++) {
+              if (invData[j][invIdIdx] === invoiceId) {
+                invSheet.getRange(j + 1, invPayIdx + 1).setValue(data.Payment_Status || 'Unpaid');
+                break;
+              }
+            }
+          }
+        }
+      }
+      
       return { success: true, message: 'Payment status updated.' };
     }
   }
@@ -589,11 +659,17 @@ function getDashboardData(options) {
   const invSummary = getStockSummaryInternal();
   const invoices = getSheetData(SHEETS.INVOICES);
   const invOut = getSheetData(SHEETS.INVENTORY_OUT);
+  const deliveryOrders = getSheetData(SHEETS.DELIVERY_ORDERS);
   
   const todayStr = formatDate(new Date());
   
-  // Pending Invoices logic
-  const pendingInvoices = invoices.filter(inv => inv.Status === 'Finalized' && inv.Payment_Status !== 'Paid');
+  // Pending Invoices logic - check both Invoices and Delivery Orders sheets
+  const pendingInvoices = invoices.filter(inv => {
+    if (inv.Status !== 'Finalized') return false;
+    const doItem = deliveryOrders.find(d => String(d.Invoice_ID).trim() === String(inv.Invoice_ID).trim());
+    const isPaid = (doItem && doItem.Payment_Status === 'Paid') || inv.Payment_Status === 'Paid';
+    return !isPaid;
+  });
   const overdueCount = pendingInvoices.filter(inv => inv.Payment_Due_Date && inv.Payment_Due_Date < todayStr).length;
   
   // Sort pending invoices: Earliest due date first, then newest created
@@ -620,11 +696,18 @@ function getDashboardData(options) {
   const lowStockOnlineCount = stockDetails.filter(s => s.onlineStock < 10).length;
 
   const channelFilter = options.channel || '';
+  const dateFrom = options.dateFrom || '';
+  const dateTo = options.dateTo || '';
   const salesMap = {};
+  
   invOut.forEach(r => {
     if (r.Reason && (r.Reason === 'B2B Sales' || r.Reason === 'Online Sales')) {
       if (channelFilter === 'online' && r.Reason !== 'Online Sales') return;
       if (channelFilter === 'b2b' && r.Reason !== 'B2B Sales') return;
+
+      const rDate = r.Date ? formatDate(r.Date) : '';
+      if (dateFrom && rDate < dateFrom) return;
+      if (dateTo && rDate > dateTo) return;
 
       if (!salesMap[r.SKU]) salesMap[r.SKU] = { SKU: r.SKU, totalSold: 0 };
       salesMap[r.SKU].totalSold += Number(r.Quantity) || 0;
@@ -1043,4 +1126,75 @@ function resetAdminPassword() {
   sheet.appendRow(['USR-001', targetEmail, 'Admin', 'Administrator', hashed]);
   Logger.log('✅ Admin user was not found, so it was created with password: ' + newPass);
   return { success: true, message: 'Admin user created.' };
+}
+
+function checkOverdueInvoicesAndSendEmails() {
+  try {
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const invSheet = ss.getSheetByName(SHEETS.INVOICES);
+    if (!invSheet) return;
+    
+    const data = getSheetData(SHEETS.INVOICES);
+    if (data.length === 0) return;
+    
+    // Date 2 days from now
+    const targetDate = new Date();
+    targetDate.setDate(targetDate.getDate() + 2);
+    const targetDateStr = formatDate(targetDate);
+    
+    const upcomingInvoices = data.filter(inv => {
+      // Must be finalized and not paid
+      const isPending = inv.Status === 'Finalized' && inv.Payment_Status !== 'Paid';
+      if (!isPending) return false;
+      
+      // Compare due date
+      if (!inv.Payment_Due_Date) return false;
+      const dueDateStr = formatDate(new Date(inv.Payment_Due_Date));
+      return dueDateStr === targetDateStr;
+    });
+    
+    if (upcomingInvoices.length === 0) {
+      Logger.log('No invoices due in 2 days.');
+      return;
+    }
+    
+    // Construct email content
+    let emailBody = 'Halo Team Selfmology,\n\nBerikut adalah daftar invoice yang jatuh tempo dalam 2 hari (' + targetDateStr + '):\n\n';
+    
+    upcomingInvoices.forEach(inv => {
+      emailBody += `- Invoice ID: ${inv.Invoice_ID}\n`;
+      emailBody += `  Customer: ${inv.Customer_Name}\n`;
+      emailBody += `  Total: Rp ${Number(inv.Total_Amount).toLocaleString('id-ID')}\n`;
+      emailBody += `  Jatuh Tempo: ${inv.Payment_Due_Date}\n\n`;
+    });
+    
+    emailBody += 'Mohon cek pembayaran dari customer terkait.\n\nTerima kasih,\nSelfmology ERP System';
+    
+    MailApp.sendEmail({
+      to: 'selfmology@gmail.com',
+      subject: '[Selfmology ERP] Pengingat Pembayaran Invoice - 2 Hari Sebelum Jatuh Tempo',
+      body: emailBody
+    });
+    
+    Logger.log('Sent reminder email for ' + upcomingInvoices.length + ' invoices.');
+  } catch (err) {
+    Logger.log('Error in checkOverdueInvoicesAndSendEmails: ' + err.message);
+  }
+}
+
+function setupDailyTrigger() {
+  const triggers = ScriptApp.getProjectTriggers();
+  const triggerName = 'checkOverdueInvoicesAndSendEmails';
+  
+  const exists = triggers.some(t => t.getHandlerFunction() === triggerName);
+  if (!exists) {
+    ScriptApp.newTrigger(triggerName)
+      .timeBased()
+      .everyDays(1)
+      .atHour(8) // Run daily at 8:00 AM
+      .create();
+    Logger.log('Daily trigger setup successfully.');
+    return { success: true, message: 'Daily trigger setup successfully.' };
+  }
+  return { success: true, message: 'Daily trigger already exists.' };
 }
