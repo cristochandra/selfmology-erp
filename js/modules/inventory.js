@@ -532,28 +532,31 @@ const Inventory = {
             Shipping_Carrier: carrier
           });
 
-          // Apply FIFO logic using local summary
-          const batchAssignments = assignBatchFIFOLocal(sku, totalQty);
-          
-          for (const ba of batchAssignments) {
-            outRows.push({
-              SKU: sku,
-              Quantity: ba.qty,
-              Date: dateStr,
-              Reason: 'Online Sales',
-              Reference_ID: refId,
-              Batch_Number: ba.batch,
-              Warehouse_Type: 'Online Warehouse'
-            });
-            // Decrement local summary so next row sees updated stock
-            const summaryRow = localSummary.find(s => s.SKU === sku && s.Warehouse_Type === 'Online Warehouse' && s.Batch_Number === ba.batch);
-            if (summaryRow) summaryRow.Qty -= ba.qty;
+          // Only deduct from inventory if date is starting 24 June 2026
+          if (dateStr >= '2026-06-24') {
+            // Apply FIFO logic using local summary
+            const batchAssignments = assignBatchFIFOLocal(sku, totalQty);
+            
+            for (const ba of batchAssignments) {
+              outRows.push({
+                SKU: sku,
+                Quantity: ba.qty,
+                Date: dateStr,
+                Reason: 'Online Sales',
+                Reference_ID: refId,
+                Batch_Number: ba.batch,
+                Warehouse_Type: 'Online Warehouse'
+              });
+              // Decrement local summary so next row sees updated stock
+              const summaryRow = localSummary.find(s => s.SKU === sku && s.Warehouse_Type === 'Online Warehouse' && s.Batch_Number === ba.batch);
+              if (summaryRow) summaryRow.Qty -= ba.qty;
+            }
           }
         }
 
         const recapItems = Object.values(recapMap);
 
-        if (outRows.length === 0 || recapItems.length === 0) {
+        if (recapItems.length === 0) {
           App.hideLoading();
           let msg = "No valid completed sales items matching Master Products found.";
           if (skippedDuplicates > 0) {
@@ -632,8 +635,13 @@ const Inventory = {
           `;
           previewEl.classList.remove('hidden');
           importBtn.classList.remove('hidden');
+          const totalPcsDeducted = outRows.reduce((sum, r) => sum + r.Quantity, 0);
           const totalPcsSold = recapItems.reduce((sum, r) => sum + r.totalQty, 0);
-          importBtn.innerHTML = `Execute Deduction (Total: ${totalPcsSold} Pcs Terjual)`;
+          if (totalPcsDeducted > 0) {
+            importBtn.innerHTML = `Execute Deduction (Deduct: ${totalPcsDeducted} Pcs, Total Sales: ${totalPcsSold} Pcs)`;
+          } else {
+            importBtn.innerHTML = `Record Sales Only (Total Sales: ${totalPcsSold} Pcs)`;
+          }
         }
 
         App.hideLoading();
@@ -649,19 +657,20 @@ const Inventory = {
     };
     reader.readAsArrayBuffer(file);
   },
-
   async confirmUpload() {
-    if (!this.pendingOutRows || this.pendingOutRows.length === 0) return;
+    if ((!this.pendingOutRows || this.pendingOutRows.length === 0) && (!this.pendingRawSales || this.pendingRawSales.length === 0)) return;
     
     App.showLoading();
     try {
       const result = await API.call('bulkAddInventoryOut', { 
-        rows: this.pendingOutRows,
+        rows: this.pendingOutRows || [],
         rawSales: this.pendingRawSales || []
       });
       App.hideLoading();
       if (result.success) {
-        App.toast(`Successfully processed ${this.pendingOutRows.length} stock out transactions!`, 'success');
+        const count = (this.pendingOutRows ? this.pendingOutRows.length : 0);
+        const salesCount = (this.pendingRawSales ? this.pendingRawSales.length : 0);
+        App.toast(`Successfully processed ${count} stock deductions and ${salesCount} sales records!`, 'success');
         
         // Reset preview
         this.pendingOutRows = null;
@@ -679,5 +688,30 @@ const Inventory = {
       App.hideLoading();
       App.toast("Network error during execution.", 'danger');
     }
+  },
+
+  async resetOnlineTransactions() {
+    App.confirm(
+      'Reset Online Transactions',
+      'Are you sure you want to delete and reverse all online CSV transaction records from the inventory ledger? This will restore stock counts for the stock opname.',
+      async () => {
+        App.showLoading();
+        try {
+          const result = await API.call('resetOnlineTransactions');
+          App.hideLoading();
+          if (result.success) {
+            App.toast(result.message, 'success');
+            this.load();
+            if (typeof Dashboard !== 'undefined' && AppState.currentPage === 'dashboard') Dashboard.load();
+          } else {
+            App.toast(result.error || 'Failed to reset online transactions.', 'danger');
+          }
+        } catch (err) {
+          App.hideLoading();
+          App.toast('Network error during reset.', 'danger');
+        }
+      },
+      'danger'
+    );
   }
 };

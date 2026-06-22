@@ -61,6 +61,11 @@ const Dashboard = {
     // KPI Cards
     document.getElementById('kpi-skus').textContent = d.totalSKUs;
     document.getElementById('kpi-stock').textContent = d.totalStockUnits.toLocaleString();
+    
+    const kpiExpenses = document.getElementById('kpi-expenses');
+    if (kpiExpenses) {
+      kpiExpenses.textContent = App.formatCurrency(d.totalExpenses || 0);
+    }
 
     // Show alerts if any
     const alertContainer = document.getElementById('dashboard-alerts');
@@ -86,6 +91,9 @@ const Dashboard = {
     // Top Selling Chart
     this.renderTopSelling(d.topSelling);
 
+    // Expense Breakdown Chart
+    this.renderExpenseBreakdown(d.expenseBreakdown);
+
     // Stock Table
     this.renderStockTable(d.stockDetails);
 
@@ -97,6 +105,30 @@ const Dashboard = {
 
     // Bind filter button
     document.getElementById('dash-filter-btn').onclick = () => this.load();
+  },
+
+  renderExpenseBreakdown(items) {
+    const container = document.getElementById('expense-breakdown-chart');
+    if (!container) return;
+    if (!items || items.length === 0) {
+      container.innerHTML = `
+        <div class="empty-state">
+          <div class="empty-state-icon">💸</div>
+          <p class="empty-state-text">No expense data for this range</p>
+        </div>`;
+      return;
+    }
+
+    const max = Math.max(...items.map(i => i.Amount));
+    container.innerHTML = items.map(item => `
+      <div class="bar-row">
+        <div class="bar-label" title="${item.Category}">${item.Category}</div>
+        <div class="bar-track">
+          <div class="bar-fill" style="width: ${(item.Amount / max * 100)}%; background: var(--color-red);"></div>
+        </div>
+        <div class="bar-value">${App.formatCurrency(item.Amount)}</div>
+      </div>
+    `).join('');
   },
 
   renderTopSelling(items) {

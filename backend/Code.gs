@@ -50,6 +50,7 @@ function handleRequest(e) {
       case 'getInventoryOut':     result = getInventoryOut(); break;
       case 'addInventoryOut':     result = addInventoryOut(data); break;
       case 'bulkAddInventoryOut': result = bulkAddInventoryOut(data); break;
+      case 'resetOnlineTransactions': result = resetOnlineTransactions(); break;
       case 'moveStock':           result = moveStock(data); break;
       case 'getStockSummary':     result = { success: true, data: getStockSummaryInternal() }; break;
       case 'getInvoices':         result = getInvoices(); break;
@@ -66,6 +67,8 @@ function handleRequest(e) {
       case 'updatePaymentStatus': result = updatePaymentStatus(data); break;
       case 'getExpenses':         result = getExpenses(); break;
       case 'addExpense':          result = addExpense(data); break;
+      case 'bulkAddExpenses':     result = bulkAddExpenses(data); break;
+      case 'uploadFileToDrive':   result = uploadFileToDrive(data); break;
       case 'getCustomers':        result = getCustomers(); break;
       case 'getDashboardData':    result = getDashboardData(data); break;
       case 'getUsers':            result = getUsers(); break;
@@ -289,24 +292,26 @@ function moveStock(data) {
 
 function bulkAddInventoryOut(data) {
   const rows = data.rows || [];
-  if (!rows.length) return { success: false, error: 'No rows provided.' };
+  const rawSales = data.rawSales || [];
+  if (!rows.length && !rawSales.length) return { success: false, error: 'No rows or sales provided.' };
   
   // 1. Write stock ledger deductions to Inventory_Out
-  const sheet = getSheet(SHEETS.INVENTORY_OUT);
-  const headers = ['Transaction_ID', 'Date', 'SKU', 'Quantity', 'Reason', 'Reference_ID', 'Batch_Number', 'Warehouse_Type'];
-  const newRows = rows.map(row => {
-    if (!row.Transaction_ID) row.Transaction_ID = generateId('OUT');
-    if (!row.Date) row.Date = formatDate(row.Date);
-    if (!row.Warehouse_Type) row.Warehouse_Type = 'Online Warehouse'; // CSV is for online
-    row.Quantity = Number(row.Quantity) || 0;
-    return headers.map(h => row[h] !== undefined ? row[h] : '');
-  });
-  if (newRows.length > 0) {
-    sheet.getRange(sheet.getLastRow() + 1, 1, newRows.length, headers.length).setValues(newRows);
+  if (rows.length > 0) {
+    const sheet = getSheet(SHEETS.INVENTORY_OUT);
+    const headers = ['Transaction_ID', 'Date', 'SKU', 'Quantity', 'Reason', 'Reference_ID', 'Batch_Number', 'Warehouse_Type'];
+    const newRows = rows.map(row => {
+      if (!row.Transaction_ID) row.Transaction_ID = generateId('OUT');
+      if (!row.Date) row.Date = formatDate(row.Date);
+      if (!row.Warehouse_Type) row.Warehouse_Type = 'Online Warehouse'; // CSV is for online
+      row.Quantity = Number(row.Quantity) || 0;
+      return headers.map(h => row[h] !== undefined ? row[h] : '');
+    });
+    if (newRows.length > 0) {
+      sheet.getRange(sheet.getLastRow() + 1, 1, newRows.length, headers.length).setValues(newRows);
+    }
   }
   
   // 2. Write raw sales transactions to Ecommerce_Sales for future analysis
-  const rawSales = data.rawSales || [];
   if (rawSales.length > 0) {
     let salesSheet = getSheet(SHEETS.ECOMMERCE_SALES);
     if (!salesSheet) {
@@ -336,7 +341,56 @@ function bulkAddInventoryOut(data) {
     salesSheet.getRange(salesSheet.getLastRow() + 1, 1, salesRows.length, salesHeaders.length).setValues(salesRows);
   }
   
-  return { success: true, message: newRows.length + ' rows imported.', count: newRows.length };
+  return { success: true, message: rows.length + ' deductions and ' + rawSales.length + ' sales records processed.', count: rows.length };
+}
+
+function resetOnlineTransactions() {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(15000);
+    const sheet = getSheet(SHEETS.INVENTORY_OUT);
+    if (!sheet) return { success: false, error: 'Inventory Out sheet not found.' };
+    
+    const allData = sheet.getDataRange().getValues();
+    if (allData.length <= 1) {
+      return { success: true, message: 'No inventory out records to reset.', removedCount: 0 };
+    }
+    
+    const headers = allData[0];
+    const reasonIdx = headers.indexOf('Reason');
+    const whIdx = headers.indexOf('Warehouse_Type');
+    
+    if (reasonIdx === -1 || whIdx === -1) {
+      return { success: false, error: 'Required columns (Reason, Warehouse_Type) not found in Inventory_Out.' };
+    }
+    
+    const newRows = [headers];
+    let removedCount = 0;
+    
+    for (let i = 1; i < allData.length; i++) {
+      const reason = allData[i][reasonIdx];
+      const wh = allData[i][whIdx];
+      if (reason === 'Online Sales' && wh === 'Online Warehouse') {
+        removedCount++;
+      } else {
+        newRows.push(allData[i]);
+      }
+    }
+    
+    // Clear and rewrite sheet contents
+    sheet.clearContent();
+    sheet.getRange(1, 1, newRows.length, headers.length).setValues(newRows);
+    
+    return { 
+      success: true, 
+      message: 'Successfully reset and reversed ' + removedCount + ' online stock deductions.', 
+      removedCount: removedCount 
+    };
+  } catch (err) {
+    return { success: false, error: err.message };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function getStockSummaryInternal() {
@@ -636,12 +690,95 @@ function updatePaymentStatus(data) {
 function getExpenses() { return { success: true, data: getSheetData(SHEETS.EXPENSES) }; }
 
 function addExpense(data) {
-  const headers = ['Expense_ID', 'Date', 'Category', 'Amount', 'Notes', 'Receipt_Image_URL'];
+  const headers = ['Expense_ID', 'Date', 'Item', 'Amount', 'Category', 'Debited_From', 'Credited_To', 'Remarks', 'Invoice_Link', 'Payment_Proof_Link', 'Executed', 'Month', 'Year'];
   if (!data.Expense_ID) data.Expense_ID = generateId('EXP');
   if (!data.Date) data.Date = formatDate();
+  
+  // Automatically calculate Month and Year from Date
+  try {
+    const dateObj = new Date(data.Date);
+    const months = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+    if (!data.Month) data.Month = months[dateObj.getMonth()];
+    if (!data.Year) data.Year = String(dateObj.getFullYear());
+  } catch (e) {
+    if (!data.Month) data.Month = '';
+    if (!data.Year) data.Year = '';
+  }
+
   data.Amount = Number(data.Amount) || 0;
   appendRow(SHEETS.EXPENSES, data, headers);
   return { success: true, message: 'Expense recorded.', expenseId: data.Expense_ID };
+}
+
+function bulkAddExpenses(data) {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(15000);
+    const rows = data.rows || [];
+    if (!rows.length) return { success: false, error: 'No rows provided.' };
+    
+    const sheet = getSheet(SHEETS.EXPENSES);
+    const headers = ['Expense_ID', 'Date', 'Item', 'Amount', 'Category', 'Debited_From', 'Credited_To', 'Remarks', 'Invoice_Link', 'Payment_Proof_Link', 'Executed', 'Month', 'Year'];
+    
+    if (data.overwrite) {
+      if (sheet.getLastRow() >= 2) {
+        sheet.getRange(2, 1, sheet.getLastRow() - 1, headers.length).clearContent();
+      }
+    }
+    
+    // Process rows and make sure Month and Year are populated
+    const months = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+    const newRows = rows.map((row, idx) => {
+      if (!row.Expense_ID) {
+        row.Expense_ID = 'EXP-' + String(1001 + idx).padStart(4, '0');
+      }
+      row.Amount = Number(row.Amount) || 0;
+      row.Executed = row.Executed === true || row.Executed === 'true' || row.Executed === 'YES' || row.Executed === 'checked';
+      
+      if (row.Date) {
+        try {
+          const dateObj = new Date(row.Date);
+          if (!row.Month) row.Month = months[dateObj.getMonth()];
+          if (!row.Year) row.Year = String(dateObj.getFullYear());
+        } catch (e) {}
+      }
+      
+      return headers.map(h => row[h] !== undefined ? row[h] : '');
+    });
+    
+    if (newRows.length > 0) {
+      sheet.getRange(sheet.getLastRow() + 1, 1, newRows.length, headers.length).setValues(newRows);
+    }
+    return { success: true, message: newRows.length + ' expenses imported successfully.' };
+  } catch (err) {
+    return { success: false, error: err.message };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function uploadFileToDrive(data) {
+  try {
+    const { fileData, fileName, folderId } = data;
+    if (!fileData || !fileName || !folderId) {
+      return { success: false, error: 'fileData, fileName, and folderId are required.' };
+    }
+    
+    const folder = DriveApp.getFolderById(folderId);
+    const splitData = fileData.split(',');
+    const contentType = splitData[0].match(/:(.*?);/)[1];
+    const rawData = splitData[1];
+    const decodedData = Utilities.base64Decode(rawData);
+    const blob = Utilities.newBlob(decodedData, contentType, fileName);
+    const file = folder.createFile(blob);
+    
+    // Set file visibility to public link so anyone inside the ERP can open it
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    
+    return { success: true, url: file.getUrl() };
+  } catch (err) {
+    return { success: false, error: 'Drive upload error: ' + err.message };
+  }
 }
 
 // ============================================================
@@ -713,6 +850,21 @@ function getDashboardData(options) {
       salesMap[r.SKU].totalSold += Number(r.Quantity) || 0;
     }
   });
+
+  // For online sales before 2026-06-24, read from Ecommerce_Sales (since they didn't deduct inventory and are not in invOut)
+  if (channelFilter !== 'b2b') {
+    const ecommerceSales = getSheetData(SHEETS.ECOMMERCE_SALES) || [];
+    ecommerceSales.forEach(r => {
+      const rDate = r.Date ? formatDate(r.Date) : '';
+      if (rDate && rDate >= '2026-06-24') return; // Handled via invOut Online Sales
+      
+      if (dateFrom && rDate < dateFrom) return;
+      if (dateTo && rDate > dateTo) return;
+
+      if (!salesMap[r.SKU]) salesMap[r.SKU] = { SKU: r.SKU, totalSold: 0 };
+      salesMap[r.SKU].totalSold += Number(r.Quantity) || 0;
+    });
+  }
   const topSelling = Object.values(salesMap).sort((a, b) => b.totalSold - a.totalSold).slice(0, 10)
     .map(s => ({ ...s, Product_Name: master.find(m => m.SKU === s.SKU)?.Product_Name || s.SKU }));
 
@@ -728,6 +880,31 @@ function getDashboardData(options) {
     Product_Name: master.find(m => m.SKU === s.SKU)?.Product_Name || s.SKU
   }));
 
+  // Expenses calculation (excluding Category 'Investment')
+  const expensesData = getSheetData(SHEETS.EXPENSES) || [];
+  let totalExpenses = 0;
+  const expenseBreakdownMap = {};
+  
+  expensesData.forEach(e => {
+    const category = String(e.Category || '').trim();
+    if (category.toLowerCase() === 'investment') return;
+    
+    const eDate = e.Date ? formatDate(e.Date) : '';
+    if (dateFrom && eDate < dateFrom) return;
+    if (dateTo && eDate > dateTo) return;
+    
+    const amount = Number(e.Amount) || 0;
+    totalExpenses += amount;
+    
+    const catName = category || 'Other';
+    if (!expenseBreakdownMap[catName]) expenseBreakdownMap[catName] = 0;
+    expenseBreakdownMap[catName] += amount;
+  });
+  
+  const expenseBreakdown = Object.keys(expenseBreakdownMap)
+    .map(cat => ({ Category: cat, Amount: expenseBreakdownMap[cat] }))
+    .sort((a, b) => b.Amount - a.Amount);
+
   return {
     success: true,
     data: {
@@ -738,7 +915,9 @@ function getDashboardData(options) {
       stockDetails: stockDetails,
       topPendingInvoices: topPendingInvoices,
       topSelling: topSelling,
-      expiringBatches: expiringBatches
+      expiringBatches: expiringBatches,
+      totalExpenses: totalExpenses,
+      expenseBreakdown: expenseBreakdown
     }
   };
 }
@@ -808,7 +987,7 @@ function initializeSheets() {
     'Invoices':           ['Invoice_ID', 'Date_Created', 'Customer_Name', 'Total_Amount', 'Discount_Value', 'Discount_Type', 'Status', 'Payment_Due_Date'],
     'Invoice_Line_Items': ['Line_ID', 'Invoice_ID', 'SKU', 'Quantity', 'Unit_Price', 'Line_Total'],
     'Delivery_Orders':    ['DO_ID', 'Invoice_ID', 'Date_Created', 'Status', 'Payment_Status', 'Payment_Proof_URL', 'Shipping_Address', 'Payment_Date'],
-    'Expenses':           ['Expense_ID', 'Date', 'Category', 'Amount', 'Notes', 'Receipt_Image_URL'],
+    'Expenses':           ['Expense_ID', 'Date', 'Item', 'Amount', 'Category', 'Debited_From', 'Credited_To', 'Remarks', 'Invoice_Link', 'Payment_Proof_Link', 'Executed', 'Month', 'Year'],
     'Users':              ['User_ID', 'Email', 'Role', 'Name', 'Password'],
     'Customers':          ['Customer_Name']
   };

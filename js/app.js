@@ -147,12 +147,12 @@ const DemoData = {
   getExpenses() {
     return {
       success: true, data: [
-        { Expense_ID: 'EXP-001', Date: '2026-03-03', Category: 'Packaging', Amount: 2500000, Notes: 'Monthly packaging supplies restock', Receipt_Image_URL: '' },
-        { Expense_ID: 'EXP-002', Date: '2026-03-15', Category: 'Marketing', Amount: 3000000, Notes: 'Social media ads for March campaign', Receipt_Image_URL: '' },
-        { Expense_ID: 'EXP-003', Date: '2026-04-03', Category: 'Packaging', Amount: 2500000, Notes: 'April packaging materials', Receipt_Image_URL: '' },
-        { Expense_ID: 'EXP-004', Date: '2026-04-10', Category: 'Marketing', Amount: 5000000, Notes: 'Instagram influencer collaboration', Receipt_Image_URL: '' },
-        { Expense_ID: 'EXP-005', Date: '2026-04-15', Category: 'Logistics', Amount: 1200000, Notes: 'Shipping cost with JNE for B2B orders', Receipt_Image_URL: '' },
-        { Expense_ID: 'EXP-006', Date: '2026-04-20', Category: 'Office Supplies', Amount: 350000, Notes: 'Printer paper and stationery', Receipt_Image_URL: '' },
+        { Expense_ID: 'EXP-001', Date: '2026-03-03', Item: 'Monthly packaging supplies restock', Amount: 2500000, Category: 'Packaging', Debited_From: 'Cristo', Credited_To: 'Supplier', Remarks: 'April restock', Invoice_Link: 'https://drive.google.com/file/d/1PUBZaiCjaFX7dVdR8bkEheOX6b0wSYUe/view', Payment_Proof_Link: '', Executed: true, Month: 'Maret', Year: '2026' },
+        { Expense_ID: 'EXP-002', Date: '2026-03-15', Item: 'Social media ads for March campaign', Amount: 3000000, Category: 'Marketing', Debited_From: 'Devin', Credited_To: 'Freelance', Remarks: 'Instagram campaign', Invoice_Link: '', Payment_Proof_Link: '', Executed: true, Month: 'Maret', Year: '2026' },
+        { Expense_ID: 'EXP-003', Date: '2026-04-03', Item: 'April packaging materials', Amount: 2500000, Category: 'Packaging', Debited_From: 'Cristo', Credited_To: 'Supplier', Remarks: '', Invoice_Link: '', Payment_Proof_Link: '', Executed: true, Month: 'April', Year: '2026' },
+        { Expense_ID: 'EXP-004', Date: '2026-04-10', Item: 'Instagram influencer collaboration', Amount: 5000000, Category: 'Marketing', Debited_From: 'Devin', Credited_To: 'Freelance', Remarks: '', Invoice_Link: '', Payment_Proof_Link: '', Executed: true, Month: 'April', Year: '2026' },
+        { Expense_ID: 'EXP-005', Date: '2026-04-15', Item: 'Shipping cost with JNE for B2B orders', Amount: 1200000, Category: 'Logistics', Debited_From: 'Kas Kecil', Credited_To: 'External', Remarks: 'JNE B2B', Invoice_Link: '', Payment_Proof_Link: '', Executed: true, Month: 'April', Year: '2026' },
+        { Expense_ID: 'EXP-006', Date: '2026-04-20', Item: 'Printer paper and stationery', Amount: 350000, Category: 'Office Supplies', Debited_From: 'Kas Kecil', Credited_To: 'External', Remarks: '', Invoice_Link: '', Payment_Proof_Link: '', Executed: true, Month: 'April', Year: '2026' },
       ]
     };
   },
@@ -210,6 +210,25 @@ const DemoData = {
       .sort((a, b) => b.totalSold - a.totalSold)
       .map(s => ({ ...s, Product_Name: stockMap[s.SKU]?.Product_Name || s.SKU }));
 
+    const expenses = DemoData.getExpenses().data;
+    let totalExpenses = 0;
+    const expenseBreakdownMap = {};
+    expenses.forEach(e => {
+      const category = String(e.Category || '').trim();
+      if (category.toLowerCase() === 'investment') return;
+      
+      const amount = Number(e.Amount) || 0;
+      totalExpenses += amount;
+      
+      const catName = category || 'Other';
+      if (!expenseBreakdownMap[catName]) expenseBreakdownMap[catName] = 0;
+      expenseBreakdownMap[catName] += amount;
+    });
+    
+    const expenseBreakdown = Object.entries(expenseBreakdownMap)
+      .map(([Category, Amount]) => ({ Category, Amount }))
+      .sort((a, b) => b.Amount - a.Amount);
+
     return {
       success: true, data: {
         totalSKUs: master.length,
@@ -218,7 +237,9 @@ const DemoData = {
         lowStockCount: lowStockItems.length,
         stockDetails: Object.values(stockMap),
         lowStockItems,
-        topSelling
+        topSelling,
+        totalExpenses,
+        expenseBreakdown
       }
     };
   },

@@ -726,6 +726,31 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
   color: #4D7C0F;
 }
 
+.badge-do-pending {
+  background: #FEF3C7;
+  color: #D97706;
+}
+
+.badge-pending-unpaid {
+  background: #FEE2E2;
+  color: #DC2626;
+}
+
+.badge-paid-pending {
+  background: #E0E7FF;
+  color: #4F46E5;
+}
+
+.badge-delivered-unpaid {
+  background: #FFEDD5;
+  color: #EA580C;
+}
+
+.badge-completed {
+  background: var(--color-mint-light);
+  color: #0D9668;
+}
+
 /* ============================================================
    LIST ITEMS
    ============================================================ */

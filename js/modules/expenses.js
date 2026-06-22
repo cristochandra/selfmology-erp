@@ -1,6 +1,6 @@
 // ============================================================
 // SELFMOLOGY ERP – Expenses Module
-// Updated: Notes input, date range filter, monthly view
+// Updated: 13-column schema, Google Drive uploads, and details
 // ============================================================
 
 const Expenses = {
@@ -91,30 +91,52 @@ const Expenses = {
 
     const listHtml = this.filtered
       .sort((a, b) => new Date(b.Date) - new Date(a.Date))
-      .map(e => `
-        <div class="list-item" onclick="Expenses.showDetail('${e.Expense_ID}')">
-          <div class="list-item-icon" style="background:var(--color-orange-light);">
-            ${this.getCategoryEmoji(e.Category)}
+      .map(e => {
+        const titleStr = e.Item || e.Remarks || e.Category || 'Uncategorized';
+        const remarksSnippet = e.Remarks ? ` · ${e.Remarks.substring(0, 30)}${e.Remarks.length > 30 ? '…' : ''}` : '';
+        const debitCreditStr = (e.Debited_From || e.Credited_To) ? ` · ${e.Debited_From || '-' } ➔ ${e.Credited_To || '-'}` : '';
+        const executedBadge = e.Executed === true || e.Executed === 'true' || e.Executed === 'YES' || e.Executed === 'checked' ? '✅' : '⏳';
+        
+        return `
+          <div class="list-item" onclick="Expenses.showDetail('${e.Expense_ID}')">
+            <div class="list-item-icon" style="background:var(--color-orange-light);">
+              ${this.getCategoryEmoji(e.Category)}
+            </div>
+            <div class="list-item-content">
+              <div class="list-item-title">${titleStr} ${executedBadge}</div>
+              <div class="list-item-meta">${e.Expense_ID} · ${App.formatDate(e.Date)} · ${e.Category || 'Other'}${debitCreditStr}${remarksSnippet}</div>
+            </div>
+            <div class="list-item-value" style="color:var(--color-red); text-align:right;">
+              ${App.formatCurrency(e.Amount)}
+            </div>
           </div>
-          <div class="list-item-content">
-            <div class="list-item-title">${e.Category || 'Uncategorized'}</div>
-            <div class="list-item-meta">${e.Expense_ID} · ${App.formatDate(e.Date)}${e.Notes ? ' · ' + e.Notes.substring(0, 30) + (e.Notes.length > 30 ? '…' : '') : ''}</div>
-          </div>
-          <div class="list-item-value" style="color:var(--color-red);">
-            ${App.formatCurrency(e.Amount)}
-          </div>
-        </div>
-      `).join('');
+        `;
+      }).join('');
 
     container.innerHTML = summaryHtml + listHtml;
   },
 
   renderMonthly(container) {
-    // Group ALL expenses by month (not just filtered)
+    // Group ALL expenses by month
     const byMonth = {};
+    const monthsEng = { 'Januari': '01', 'Februari': '02', 'Maret': '03', 'April': '04', 'Mei': '05', 'Juni': '06', 'Juli': '07', 'Agustus': '08', 'September': '09', 'Oktober': '10', 'November': '11', 'Desember': '12' };
+    
     this.expenses.forEach(e => {
-      const date = new Date(e.Date);
-      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+      let key;
+      if (e.Date) {
+        const parts = e.Date.split('-');
+        if (parts.length === 3) {
+          key = `${parts[0]}-${parts[1]}`;
+        }
+      }
+      if (!key) {
+        if (e.Month && e.Year) {
+          const m = monthsEng[e.Month] || '01';
+          key = `${e.Year}-${m}`;
+        } else {
+          key = 'Unknown';
+        }
+      }
       if (!byMonth[key]) byMonth[key] = { month: key, total: 0, items: [] };
       byMonth[key].total += Number(e.Amount) || 0;
       byMonth[key].items.push(e);
@@ -133,8 +155,12 @@ const Expenses = {
     }
 
     container.innerHTML = months.map(m => {
-      const [year, month] = m.month.split('-');
-      const monthName = new Date(year, parseInt(month) - 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+      let monthName = m.month;
+      if (m.month !== 'Unknown' && m.month.includes('-')) {
+        const [year, month] = m.month.split('-');
+        monthName = new Date(year, parseInt(month) - 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+      }
+      
       const byCat = {};
       m.items.forEach(e => {
         const cat = e.Category || 'Other';
@@ -165,7 +191,7 @@ const Expenses = {
       'Packaging': '📦', 'Marketing': '📢', 'Logistics': '🚚',
       'Office Supplies': '🖊️', 'Utilities': '💡', 'Salary': '👤',
       'Production': '🏭', 'Travel': '✈️', 'Maintenance': '🔧',
-      'Software': '💻', 'Other': '📋'
+      'Software': '💻', 'Other': '📋', 'Operational': '⚙️', 'Investment': '📈'
     };
     return map[cat] || '💸';
   },
@@ -174,9 +200,11 @@ const Expenses = {
     const e = this.expenses.find(ex => ex.Expense_ID === expenseId);
     if (!e) return;
 
+    const executed = e.Executed === true || e.Executed === 'true' || e.Executed === 'YES' || e.Executed === 'checked';
+
     let html = `
       <h3 class="modal-title">Expense Detail</h3>
-      <div style="display:flex;flex-direction:column;gap:12px;">
+      <div style="display:flex;flex-direction:column;gap:12px;max-height:80vh;overflow-y:auto;padding-right:4px;">
         <div class="flex-between">
           <span class="text-sm text-secondary">Expense ID</span>
           <span class="text-sm text-bold">${e.Expense_ID}</span>
@@ -186,6 +214,14 @@ const Expenses = {
           <span class="text-sm">${App.formatDate(e.Date)}</span>
         </div>
         <div class="flex-between">
+          <span class="text-sm text-secondary">Execution Status</span>
+          <span class="badge ${executed ? 'badge-in-stock' : 'badge-pending'}">${executed ? 'Executed / Paid' : 'Pending'}</span>
+        </div>
+        <div class="flex-between">
+          <span class="text-sm text-secondary">Item / Name</span>
+          <span class="text-sm text-bold">${e.Item || '-'}</span>
+        </div>
+        <div class="flex-between">
           <span class="text-sm text-secondary">Category</span>
           <span class="badge badge-draft">${e.Category || '-'}</span>
         </div>
@@ -193,18 +229,39 @@ const Expenses = {
           <span class="text-sm text-secondary">Amount</span>
           <span class="text-sm text-bold" style="font-size:18px;color:var(--color-red);">${App.formatCurrency(e.Amount)}</span>
         </div>
-        ${e.Notes ? `
+        <div class="flex-between">
+          <span class="text-sm text-secondary">Debited From</span>
+          <span class="text-sm">${e.Debited_From || '-'}</span>
+        </div>
+        <div class="flex-between">
+          <span class="text-sm text-secondary">Credited To</span>
+          <span class="text-sm">${e.Credited_To || '-'}</span>
+        </div>
+        
+        ${e.Remarks ? `
           <div>
-            <p class="text-sm text-secondary mb-xs">Notes</p>
-            <p class="text-sm" style="background:var(--bg-secondary);padding:10px 14px;border-radius:var(--radius-sm);">${e.Notes}</p>
+            <p class="text-sm text-secondary mb-xs">Remarks / Notes</p>
+            <p class="text-sm" style="background:var(--bg-secondary);padding:10px 14px;border-radius:var(--radius-sm);white-space:pre-wrap;">${e.Remarks}</p>
           </div>
         ` : ''}
-        ${e.Receipt_Image_URL ? `
-          <div class="mt-sm">
-            <p class="text-sm text-secondary mb-sm">Receipt</p>
-            <img src="${e.Receipt_Image_URL}" alt="Receipt" style="width:100%;border-radius:var(--radius-md);border:1px solid var(--border-light);">
-          </div>
-        ` : ''}
+        
+        <div style="display:flex; gap:8px; margin-top:12px;">
+          ${e.Invoice_Link ? `
+            <a href="${e.Invoice_Link}" target="_blank" class="btn btn-secondary btn-sm" style="flex:1; display:flex; align-items:center; justify-content:center; gap:4px; text-decoration:none;">
+              📄 Open Invoice
+            </a>
+          ` : `
+            <button class="btn btn-secondary btn-sm" disabled style="flex:1; opacity:0.5;">No Invoice File</button>
+          `}
+          
+          ${e.Payment_Proof_Link ? `
+            <a href="${e.Payment_Proof_Link}" target="_blank" class="btn btn-secondary btn-sm" style="flex:1; display:flex; align-items:center; justify-content:center; gap:4px; text-decoration:none;">
+              💸 View Proof
+            </a>
+          ` : `
+            <button class="btn btn-secondary btn-sm" disabled style="flex:1; opacity:0.5;">No Payment Proof</button>
+          `}
+        </div>
       </div>
     `;
     App.openModal(html);
@@ -213,60 +270,107 @@ const Expenses = {
   showAddForm() {
     const today = App.todayStr();
     const categories = [
-      'Packaging', 'Marketing', 'Logistics', 'Office Supplies',
-      'Utilities', 'Salary', 'Production', 'Travel', 'Maintenance', 'Software', 'Other'
+      'Marketing', 'Operational', 'Investment', 'Other',
+      'Packaging', 'Logistics', 'Office Supplies', 'Utilities', 'Salary', 'Production', 'Travel', 'Maintenance', 'Software'
     ];
 
     let html = `
-      <h3 class="modal-title">Add Expense</h3>
-      <form id="expense-form" onsubmit="return false;">
-        <div class="form-group">
-          <label class="form-label">Date</label>
-          <input type="date" id="exp-date" class="form-input" value="${today}">
+      <h3 class="modal-title">Record Expense</h3>
+      <form id="expense-form" onsubmit="return false;" style="max-height:75vh; overflow-y:auto; padding-right:6px;">
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Date</label>
+            <input type="date" id="exp-date" class="form-input" value="${today}" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Category</label>
+            <select id="exp-category" class="form-select" required>
+              <option value="">Select category...</option>
+              ${categories.map(c => `<option value="${c}">${c}</option>`).join('')}
+            </select>
+          </div>
         </div>
+        
         <div class="form-group">
-          <label class="form-label">Category</label>
-          <select id="exp-category" class="form-select" required>
-            <option value="">Select category...</option>
-            ${categories.map(c => `<option value="${c}">${c}</option>`).join('')}
-          </select>
+          <label class="form-label">Item / Description</label>
+          <input type="text" id="exp-item" class="form-input" placeholder="e.g. Design Fiver, Sample WKI" required>
         </div>
+        
         <div class="form-group">
           <label class="form-label">Amount (Rp)</label>
           <input type="number" id="exp-amount" class="form-input" min="0" required placeholder="0">
         </div>
-        <div class="form-group">
-          <label class="form-label">Notes / Description</label>
-          <textarea id="exp-notes" class="form-textarea" placeholder="e.g. Monthly packaging supplies restock" rows="3"></textarea>
-        </div>
-        <div class="form-group">
-          <label class="form-label">Receipt Image</label>
-          <div class="file-upload" id="receipt-drop-zone" style="padding:16px;">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:24px;height:24px;"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-            <div class="file-upload-text">Tap to upload receipt</div>
-            <div class="file-upload-hint">JPG, PNG, or PDF</div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Debited From</label>
+            <input type="text" id="exp-debited" class="form-input" placeholder="e.g. Devin, Cristo, Kas Kecil">
           </div>
-          <input type="file" id="receipt-file-input" accept="image/*,.pdf" class="hidden">
-          <div id="receipt-preview" class="hidden mt-sm"></div>
-          <input type="hidden" id="exp-receipt-url" value="">
+          <div class="form-group">
+            <label class="form-label">Credited To</label>
+            <input type="text" id="exp-credited" class="form-input" placeholder="e.g. Freelance, Supplier, External">
+          </div>
         </div>
-        <button type="submit" class="btn btn-primary btn-full btn-lg" id="exp-submit-btn">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14"/></svg>
+
+        <div class="form-group">
+          <label class="form-label">Remarks / Notes</label>
+          <textarea id="exp-remarks" class="form-textarea" placeholder="Additional details..." rows="2"></textarea>
+        </div>
+
+        <div class="form-group" style="display:flex; align-items:center; gap:8px;">
+          <input type="checkbox" id="exp-executed" style="width:18px; height:18px; accent-color:var(--color-primary);" checked>
+          <label for="exp-executed" class="form-label" style="margin:0; cursor:pointer;">Executed / Paid</label>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Invoice File</label>
+          <div class="file-upload" id="invoice-drop-zone" style="padding:12px;">
+            <div class="file-upload-text">Tap to select Invoice</div>
+            <div class="file-upload-hint">Auto-uploads to Google Drive</div>
+          </div>
+          <input type="file" id="invoice-file-input" accept="image/*,.pdf" class="hidden">
+          <div id="invoice-preview" class="hidden mt-sm text-xs text-secondary" style="padding:6px; background:var(--bg-secondary); border-radius:4px;"></div>
+          <input type="hidden" id="exp-invoice-data" value="">
+          <input type="hidden" id="exp-invoice-name" value="">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Payment Proof File</label>
+          <div class="file-upload" id="proof-drop-zone" style="padding:12px;">
+            <div class="file-upload-text">Tap to select Payment Proof</div>
+            <div class="file-upload-hint">Auto-uploads to Google Drive</div>
+          </div>
+          <input type="file" id="proof-file-input" accept="image/*,.pdf" class="hidden">
+          <div id="proof-preview" class="hidden mt-sm text-xs text-secondary" style="padding:6px; background:var(--bg-secondary); border-radius:4px;"></div>
+          <input type="hidden" id="exp-proof-data" value="">
+          <input type="hidden" id="exp-proof-name" value="">
+        </div>
+
+        <button type="submit" class="btn btn-primary btn-full btn-lg mt-md" id="exp-submit-btn">
           Record Expense
         </button>
       </form>
     `;
 
     App.openModal(html);
-    this.bindReceiptUpload();
+    this.bindFileHandlers();
 
     document.getElementById('expense-form').onsubmit = (e) => { e.preventDefault(); this.handleSubmit(); };
     document.getElementById('exp-submit-btn').onclick = () => this.handleSubmit();
   },
 
-  bindReceiptUpload() {
-    const dropZone = document.getElementById('receipt-drop-zone');
-    const fileInput = document.getElementById('receipt-file-input');
+  bindFileHandlers() {
+    this.setupFileField('invoice-drop-zone', 'invoice-file-input', 'invoice-preview', 'exp-invoice-data', 'exp-invoice-name');
+    this.setupFileField('proof-drop-zone', 'proof-file-input', 'proof-preview', 'exp-proof-data', 'exp-proof-name');
+  },
+
+  setupFileField(dropZoneId, fileInputId, previewId, dataInputId, nameInputId) {
+    const dropZone = document.getElementById(dropZoneId);
+    const fileInput = document.getElementById(fileInputId);
+    const preview = document.getElementById(previewId);
+    const dataInput = document.getElementById(dataInputId);
+    const nameInput = document.getElementById(nameInputId);
+
     if (!dropZone || !fileInput) return;
 
     dropZone.onclick = () => fileInput.click();
@@ -284,56 +388,106 @@ const Expenses = {
       e.preventDefault();
       dropZone.style.borderColor = '';
       const file = e.dataTransfer.files[0];
-      if (file) this.handleReceiptFile(file);
+      if (file) this.handleFileSelect(file, dropZone, preview, dataInput, nameInput);
     });
 
     fileInput.addEventListener('change', () => {
-      if (fileInput.files[0]) this.handleReceiptFile(fileInput.files[0]);
+      if (fileInput.files[0]) this.handleFileSelect(fileInput.files[0], dropZone, preview, dataInput, nameInput);
     });
   },
 
-  handleReceiptFile(file) {
-    const preview = document.getElementById('receipt-preview');
-    if (!preview) return;
-
-    if (file.type.startsWith('image/')) {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        preview.innerHTML = `<img src="${e.target.result}" alt="Receipt preview" style="max-width:100%;border-radius:var(--radius-md);border:1px solid var(--border-light);">`;
-        preview.classList.remove('hidden');
-        document.getElementById('exp-receipt-url').value = e.target.result;
-      };
-      reader.readAsDataURL(file);
-    } else {
-      preview.innerHTML = `
-        <div class="card card-elevated" style="padding:12px;text-align:center;">
-          <p class="text-sm">📎 ${file.name}</p>
-        </div>`;
+  handleFileSelect(file, dropZone, preview, dataInput, nameInput) {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      dataInput.value = e.target.result;
+      nameInput.value = file.name;
+      preview.innerHTML = `📎 Selected: <strong>${file.name}</strong> (${(file.size / 1024).toFixed(1)} KB)`;
       preview.classList.remove('hidden');
-    }
-
-    const dropZone = document.getElementById('receipt-drop-zone');
-    if (dropZone) {
-      dropZone.querySelector('.file-upload-text').textContent = file.name;
-      dropZone.querySelector('.file-upload-hint').textContent = 'Tap to change';
-    }
+      dropZone.querySelector('.file-upload-text').textContent = 'Change file';
+    };
+    reader.readAsDataURL(file);
   },
 
   async handleSubmit() {
-    const data = {
-      Date: document.getElementById('exp-date').value,
-      Category: document.getElementById('exp-category').value,
-      Amount: Number(document.getElementById('exp-amount').value) || 0,
-      Notes: document.getElementById('exp-notes').value.trim(),
-      Receipt_Image_URL: document.getElementById('exp-receipt-url').value
-    };
+    const date = document.getElementById('exp-date').value;
+    const category = document.getElementById('exp-category').value;
+    const item = document.getElementById('exp-item').value.trim();
+    const amount = Number(document.getElementById('exp-amount').value) || 0;
+    const debited = document.getElementById('exp-debited').value.trim();
+    const credited = document.getElementById('exp-credited').value.trim();
+    const remarks = document.getElementById('exp-remarks').value.trim();
+    const executed = document.getElementById('exp-executed').checked;
 
-    if (!data.Category || data.Amount <= 0) {
-      App.toast('Category and Amount are required.', 'warning');
+    if (!category || !item || amount <= 0) {
+      App.toast('Item, Category, and Amount are required.', 'warning');
       return;
     }
 
-    const result = await API.call('addExpense', data);
+    const invoiceData = document.getElementById('exp-invoice-data').value;
+    const invoiceName = document.getElementById('exp-invoice-name').value;
+    const proofData = document.getElementById('exp-proof-data').value;
+    const proofName = document.getElementById('exp-proof-name').value;
+
+    let invoiceLink = '';
+    let proofLink = '';
+
+    // If in demo mode, skip Drive uploads
+    if (AppState.demoMode) {
+      if (invoiceData) invoiceLink = 'https://drive.google.com/file/demo-invoice';
+      if (proofData) proofLink = 'https://drive.google.com/file/demo-proof';
+    } else {
+      // 1. Upload Invoice to Drive
+      if (invoiceData) {
+        App.showLoading();
+        App.toast('Uploading Invoice to Google Drive...', 'info');
+        const res = await API.call('uploadFileToDrive', {
+          fileData: invoiceData,
+          fileName: invoiceName || `invoice_${Date.now()}`,
+          folderId: '1w6g6jZPmXU9Kwxec9y5EtFAzOy__lOde'
+        });
+        App.hideLoading();
+        if (res.success && res.url) {
+          invoiceLink = res.url;
+        } else {
+          App.toast('Invoice upload failed: ' + (res.error || 'Unknown error'), 'error');
+          return;
+        }
+      }
+
+      // 2. Upload Payment Proof to Drive
+      if (proofData) {
+        App.showLoading();
+        App.toast('Uploading Payment Proof to Google Drive...', 'info');
+        const res = await API.call('uploadFileToDrive', {
+          fileData: proofData,
+          fileName: proofName || `payment_proof_${Date.now()}`,
+          folderId: '12WvTFCrqWpd7v_CTndhDxVoeFjdHf0R7'
+        });
+        App.hideLoading();
+        if (res.success && res.url) {
+          proofLink = res.url;
+        } else {
+          App.toast('Payment Proof upload failed: ' + (res.error || 'Unknown error'), 'error');
+          return;
+        }
+      }
+    }
+
+    // Record the expense
+    const payload = {
+      Date: date,
+      Item: item,
+      Amount: amount,
+      Category: category,
+      Debited_From: debited,
+      Credited_To: credited,
+      Remarks: remarks,
+      Invoice_Link: invoiceLink,
+      Payment_Proof_Link: proofLink,
+      Executed: executed
+    };
+
+    const result = await API.call('addExpense', payload);
     if (result.success) {
       App.toast(result.message, 'success');
       App.closeModal();

@@ -85,7 +85,7 @@
 
         <div id="dashboard-alerts"></div>
 
-        <div class="kpi-grid" id="kpi-grid" style="grid-template-columns: repeat(2, 1fr);">
+        <div class="kpi-grid" id="kpi-grid" style="grid-template-columns: repeat(3, 1fr);">
           <div class="kpi-card">
             <div class="kpi-icon yellow">📦</div>
             <div class="kpi-value" id="kpi-skus">0</div>
@@ -95,6 +95,11 @@
             <div class="kpi-icon mint">📊</div>
             <div class="kpi-value" id="kpi-stock">0</div>
             <div class="kpi-label">Stock Units</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-icon red" style="background:var(--color-red-light); color:var(--color-red);">💸</div>
+            <div class="kpi-value" id="kpi-expenses">Rp 0</div>
+            <div class="kpi-label">Total Expenses</div>
           </div>
         </div>
 
@@ -107,6 +112,11 @@
           </div>
         </div>
         <div id="top-selling-chart" class="bar-chart mb-xl"></div>
+
+        <div class="section-header mt-lg">
+          <h2 class="section-title" style="margin:0;">Expenses by Category (Excl. Investment)</h2>
+        </div>
+        <div id="expense-breakdown-chart" class="bar-chart mb-xl"></div>
 
 
 
@@ -354,6 +364,12 @@
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                 Import Rows
               </button>
+              <div style="margin-top: 24px; padding-top: 16px; border-top: 1px dashed var(--border-medium);">
+                <p class="text-xs text-secondary mb-md"><strong>Stock Opname Action:</strong> Reset all previous online transactions count in inventory ledger.</p>
+                <button class="btn btn-outline btn-full" id="csv-reset-btn" style="border-color: var(--color-red); color: var(--color-red); font-size: 13px;" onclick="Inventory.resetOnlineTransactions()">
+                  Reset & Reverse Online Deductions
+                </button>
+              </div>
             </div>
           </div>
         </div>

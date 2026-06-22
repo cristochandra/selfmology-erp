@@ -9,13 +9,20 @@ const Invoices = {
   filtered: [],
 
   async load() {
-    const [result, summaryResult] = await Promise.all([
+    const [result, summaryResult, doResult] = await Promise.all([
       API.call('getInvoices'),
-      API.call('getStockSummary')
+      API.call('getStockSummary'),
+      API.call('getDeliveryOrders')
     ]);
     
     if (summaryResult.success) {
       Inventory.summary = summaryResult.data;
+    }
+    
+    if (doResult.success) {
+      this.deliveryOrders = doResult.data;
+    } else {
+      this.deliveryOrders = [];
     }
 
     if (result.success) {
@@ -53,10 +60,11 @@ const Invoices = {
 
     container.innerHTML = this.filtered.map(inv => {
       const net = this._calcNet(inv);
+      const statusInfo = this.getCombinedStatus(inv);
       return `
         <div class="list-item" onclick="Invoices.showDetail('${inv.Invoice_ID}')">
-          <div class="list-item-icon" style="background:${inv.Status === 'Finalized' ? 'var(--color-mint-light)' : 'var(--color-orange-light)'};">
-            ${inv.Status === 'Finalized' ? '✅' : '📝'}
+          <div class="list-item-icon" style="background:${statusInfo.bg};">
+            ${statusInfo.icon}
           </div>
           <div class="list-item-content">
             <div class="list-item-title">${inv.Invoice_ID}</div>
@@ -64,10 +72,34 @@ const Invoices = {
           </div>
           <div>
             <div class="list-item-value">${App.formatCurrency(net)}</div>
-            <span class="badge ${inv.Status === 'Finalized' ? 'badge-finalized' : 'badge-draft'}" style="float:right;margin-top:4px;">${inv.Status}</span>
+            <span class="badge ${statusInfo.class}" style="float:right;margin-top:4px;">${statusInfo.text}</span>
           </div>
         </div>`;
     }).join('');
+  },
+
+  getCombinedStatus(inv) {
+    if (inv.Status === 'Draft') return { text: 'Draft', class: 'badge-draft', icon: '📝', bg: 'var(--color-orange-light)' };
+    if (inv.Status === 'Cancelled') return { text: 'Cancelled', class: 'badge-low-stock', icon: '❌', bg: 'var(--color-red-light)' };
+    
+    // Find matching DO
+    const doItem = (this.deliveryOrders || []).find(d => String(d.Invoice_ID).trim() === String(inv.Invoice_ID).trim());
+    if (!doItem) {
+      return { text: 'DO Pending', class: 'badge-do-pending', icon: '📄', bg: '#FEF3C7' };
+    }
+    
+    const isExecuted = doItem.Status === 'Executed';
+    const isPaid = doItem.Payment_Status === 'Paid' || inv.Payment_Status === 'Paid';
+    
+    if (isExecuted && isPaid) {
+      return { text: 'Paid & Delivered', class: 'badge-completed', icon: '✅', bg: 'var(--color-mint-light)' };
+    } else if (isExecuted) {
+      return { text: 'Delivered & Unpaid', class: 'badge-delivered-unpaid', icon: '🚚', bg: '#FFEDD5' };
+    } else if (isPaid) {
+      return { text: 'Paid & DO Pending', class: 'badge-paid-pending', icon: '📦', bg: '#E0E7FF' };
+    } else {
+      return { text: 'DO Pending & Unpaid', class: 'badge-pending-unpaid', icon: '📦', bg: '#FEE2E2' };
+    }
   },
 
   _calcNet(inv) {
@@ -142,6 +174,9 @@ const Invoices = {
     // Subtotal = sum of all rowTotals (what's actually charged)
     const tableSubtotal = rows.reduce((s, r) => s + r.rowTotal, 0);
 
+    const statusInfo = this.getCombinedStatus(inv);
+    const doItem = (this.deliveryOrders || []).find(d => String(d.Invoice_ID).trim() === String(inv.Invoice_ID).trim());
+
     let html = `
       <h3 class="modal-title">${inv.Invoice_ID}</h3>
       <div style="display:flex;flex-direction:column;gap:10px;">
@@ -159,8 +194,27 @@ const Invoices = {
         </div>
         <div class="flex-between">
           <span class="text-sm text-secondary">Status</span>
-          <span class="badge ${inv.Status === 'Finalized' ? 'badge-finalized' : 'badge-draft'}">${inv.Status}</span>
+          <span class="badge ${statusInfo.class}">${statusInfo.text}</span>
         </div>
+
+        ${doItem ? `
+        <div style="background:var(--bg-secondary); padding:12px; border-radius:var(--radius-md); border:1px solid var(--border-light); margin-top:4px; display:flex; flex-direction:column; gap:6px;">
+          <div style="font-weight:700; font-size:10px; text-transform:uppercase; color:var(--text-secondary); border-bottom:1px solid var(--border-light); padding-bottom:4px; margin-bottom:2px;">Connected Delivery Order</div>
+          <div class="flex-between">
+            <span class="text-xs text-secondary">DO ID</span>
+            <span class="text-xs text-bold" style="color:var(--color-primary);">${doItem.DO_ID}</span>
+          </div>
+          <div class="flex-between">
+            <span class="text-xs text-secondary">Delivery Status</span>
+            <span class="badge ${doItem.Status === 'Executed' ? 'badge-executed' : 'badge-pending'}" style="padding:2px 8px; font-size:10px;">${doItem.Status}</span>
+          </div>
+          <div class="flex-between">
+            <span class="text-xs text-secondary">Payment Status</span>
+            <span class="badge ${doItem.Payment_Status === 'Paid' ? 'badge-finalized' : 'badge-low-stock'}" style="padding:2px 8px; font-size:10px;">${doItem.Payment_Status || 'Unpaid'}</span>
+          </div>
+        </div>
+        ` : ''}
+
         <hr style="border:none;border-top:1px solid var(--border-light);">
         <h4 class="text-sm text-bold">Line Items</h4>
         <div class="table-wrapper">
@@ -224,7 +278,13 @@ const Invoices = {
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
             Print / PDF
           </button>
-          ${inv.Status === 'Finalized' ? `
+          ${doItem ? `
+            <button class="btn btn-outline" style="flex:1;" onclick="Invoices.viewConnectedDO('${doItem.DO_ID}')">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
+              View DO
+            </button>
+          ` : ''}
+          ${(inv.Status === 'Finalized' && !doItem) ? `
             <button class="btn btn-outline" style="flex:1;" onclick="Invoices.proceedToDO('${inv.Invoice_ID}')">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
               Create DO
@@ -234,6 +294,19 @@ const Invoices = {
       </div>
     `;
     App.openModal(html);
+  },
+
+  viewConnectedDO(doId) {
+    App.closeModal();
+    App.navigate('delivery');
+    setTimeout(() => {
+      const searchInput = document.getElementById('delivery-search');
+      if (searchInput) {
+        searchInput.value = doId;
+        DeliveryOrders.render();
+      }
+      DeliveryOrders.showDetail(doId);
+    }, 100);
   },
 
   async editInvoice(invoiceId) {

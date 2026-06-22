@@ -110,7 +110,10 @@ const DeliveryOrders = {
         </div>
         <div class="flex-between">
           <span class="text-sm text-secondary">Invoice</span>
-          <span class="text-sm text-bold">${d.Invoice_ID}</span>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span class="text-sm text-bold">${d.Invoice_ID}</span>
+            <button class="btn btn-outline btn-sm" style="padding: 2px 6px; font-size: 10px; border-radius: 4px;" onclick="DeliveryOrders.viewConnectedInvoice('${d.Invoice_ID}')">View Invoice</button>
+          </div>
         </div>
         <div class="flex-between">
           <span class="text-sm text-secondary">Date Created</span>
@@ -184,19 +187,32 @@ const DeliveryOrders = {
         </div>
 
         <!-- Execute Delivery Section -->
-        ${!isExecuted ? `
-          <div class="mt-lg">
-            <div style="background:var(--color-orange-light);border-radius:var(--radius-md);padding:12px 16px;margin-bottom:12px;">
-              <p class="text-sm" style="color:var(--color-orange);">
-                <strong>⚠️ Important:</strong> Executing this DO will deduct inventory for all items above. This cannot be undone.
-              </p>
+        ${!isExecuted ? (
+          (inv && inv.Status === 'Cancelled') ? `
+            <div class="mt-lg">
+              <div style="background:var(--color-red-light);border-left:4px solid var(--color-red);padding:12px 16px;margin-bottom:12px;border-radius:var(--radius-md);">
+                <p class="text-sm" style="color:var(--color-red); font-weight:500; margin:0;">
+                  ⚠️ <strong>Invoice Cancelled:</strong> The associated invoice is Cancelled. You cannot execute this DO.
+                </p>
+              </div>
+              <button class="btn btn-secondary btn-full btn-lg" disabled style="opacity:0.5; cursor:not-allowed;">
+                Execute Delivery (Blocked)
+              </button>
             </div>
-            <button class="btn btn-primary btn-full btn-lg" onclick="DeliveryOrders.handleExecute('${d.DO_ID}')">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"/></svg>
-              Execute Delivery
-            </button>
-          </div>
-        ` : `
+          ` : `
+            <div class="mt-lg">
+              <div style="background:var(--color-orange-light);border-radius:var(--radius-md);padding:12px 16px;margin-bottom:12px;">
+                <p class="text-sm" style="color:var(--color-orange);">
+                  <strong>⚠️ Important:</strong> Executing this DO will deduct inventory for all items above. This cannot be undone.
+                </p>
+              </div>
+              <button class="btn btn-primary btn-full btn-lg" onclick="DeliveryOrders.handleExecute('${d.DO_ID}')">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"/></svg>
+                Execute Delivery
+              </button>
+            </div>
+          `
+        ) : `
           <div style="background:var(--color-mint-light);border-radius:var(--radius-md);padding:12px 16px; margin-bottom:12px;">
             <p class="text-sm" style="color:#059669;">
               <strong>✅ Executed</strong> – Inventory has been deducted for all items.
@@ -549,5 +565,18 @@ const DeliveryOrders = {
       printWindow.print();
       printDiv.classList.add('hidden');
     }, 500);
+  },
+
+  viewConnectedInvoice(invoiceId) {
+    App.closeModal();
+    App.navigate('invoices');
+    setTimeout(() => {
+      const searchInput = document.getElementById('invoice-search');
+      if (searchInput) {
+        searchInput.value = invoiceId;
+        Invoices.render();
+      }
+      Invoices.showDetail(invoiceId);
+    }, 100);
   }
 };
