@@ -16,7 +16,8 @@ const SHEETS = {
   EXPENSES: 'Expenses',
   USERS: 'Users',
   CUSTOMERS: 'Customers',
-  ECOMMERCE_SALES: 'Ecommerce_Sales'
+  ECOMMERCE_SALES: 'Ecommerce_Sales',
+  OFFLINE_INCOME: 'Offline_Income'
 };
 
 // Warehouse identifiers. Offline + Online are existing; Clinic (Express) is new.
@@ -74,6 +75,8 @@ function handleRequest(e) {
       case 'addInventoryOut':     result = addInventoryOut(data); break;
       case 'bulkAddInventoryOut': result = bulkAddInventoryOut(data); break;
       case 'getEcommerceOrderIds': result = getEcommerceOrderIds(); break;
+      case 'getOfflineIncome':       result = getOfflineIncome(); break;
+      case 'bulkAddOfflineIncome':   result = bulkAddOfflineIncome(data); break;
       case 'resetOnlineTransactions': result = resetOnlineTransactions(); break;
       case 'moveStock':           result = moveStock(data); break;
       case 'getStockSummary':     result = { success: true, data: getStockSummaryInternal() }; break;
@@ -348,6 +351,65 @@ function getEcommerceOrderIds() {
   const sales = getSheetData(SHEETS.ECOMMERCE_SALES) || [];
   const ids = sales.map(s => `${String(s.Order_ID || '').trim()}|${String(s.SKU || '').trim()}`);
   return { success: true, data: ids };
+}
+
+// ============================================================
+// OFFLINE INCOME (historical, manually-tracked cash income — e.g. from a
+// pre-ERP finance tracker). Counted toward dashboard income/cashflow
+// alongside online sales and paid B2B invoices, but kept in its own sheet
+// since it has no Invoice_ID / SKU to reconcile against.
+// ============================================================
+
+function getOfflineIncome() { return { success: true, data: getSheetData(SHEETS.OFFLINE_INCOME) }; }
+
+function bulkAddOfflineIncome(data) {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(15000);
+    const rows = data.rows || [];
+    if (!rows.length) return { success: false, error: 'No rows provided.' };
+
+    let sheet = getSheet(SHEETS.OFFLINE_INCOME);
+    const headers = ['Record_ID', 'Date', 'Item', 'Amount', 'Source', 'Import_Date'];
+    if (!sheet) {
+      const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+      sheet = ss.insertSheet(SHEETS.OFFLINE_INCOME);
+      sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    } else {
+      ensureColumns(SHEETS.OFFLINE_INCOME, headers);
+    }
+
+    // Dedupe against existing rows so re-running the same import is safe.
+    const existing = getSheetData(SHEETS.OFFLINE_INCOME) || [];
+    const existingKeys = new Set(existing.map(r => `${r.Date}|${r.Item}|${r.Amount}`));
+
+    const importDateStr = formatDate(new Date());
+    let skipped = 0;
+    const newRows = [];
+    rows.forEach((row, idx) => {
+      const amount = Number(row.Amount) || 0;
+      const key = `${row.Date}|${row.Item}|${amount}`;
+      if (existingKeys.has(key)) { skipped++; return; }
+      existingKeys.add(key);
+      newRows.push([
+        'OFFIN-' + Utilities.getUuid().slice(0, 8),
+        row.Date || '',
+        row.Item || '',
+        amount,
+        row.Source || 'Historical Import',
+        importDateStr
+      ]);
+    });
+
+    if (newRows.length > 0) {
+      sheet.getRange(sheet.getLastRow() + 1, 1, newRows.length, headers.length).setValues(newRows);
+    }
+    return { success: true, message: `${newRows.length} offline income records imported, ${skipped} duplicates skipped.`, imported: newRows.length, skipped: skipped };
+  } catch (err) {
+    return { success: false, error: err.message };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function bulkAddInventoryOut(data) {
@@ -869,6 +931,7 @@ function getDashboardData(options) {
   const deliveryOrders = getSheetData(SHEETS.DELIVERY_ORDERS);
   const ecommerceSales = getSheetData(SHEETS.ECOMMERCE_SALES) || [];
   const expensesData = getSheetData(SHEETS.EXPENSES) || [];
+  const offlineIncome = getSheetData(SHEETS.OFFLINE_INCOME) || [];
 
   const now = new Date();
   const todayStr = formatDate(now);
@@ -989,7 +1052,8 @@ function getDashboardData(options) {
   const cashflow = computeCashflowSeries({
     months: 12, now: now,
     invoices: invoices, deliveryOrders: deliveryOrders,
-    ecommerceSales: ecommerceSales, expensesData: expensesData
+    ecommerceSales: ecommerceSales, expensesData: expensesData,
+    offlineIncome: offlineIncome
   });
   const thisMonthKey = Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM');
   const thisMonthCash = cashflow.find(c => c.month === thisMonthKey) || { income: 0, expense: 0 };
@@ -1025,6 +1089,7 @@ function computeCashflowSeries(args) {
   const deliveryOrders = args.deliveryOrders || [];
   const ecommerceSales = args.ecommerceSales || [];
   const expensesData = args.expensesData || [];
+  const offlineIncome = args.offlineIncome || [];
   const months = args.months || 12;
   const tz = Session.getScriptTimeZone();
   const monthKeyOf = (d) => { try { return Utilities.formatDate(new Date(d), tz, 'yyyy-MM'); } catch (e) { return ''; } };
@@ -1061,6 +1126,12 @@ function computeCashflowSeries(args) {
     if (!isPaid) return;
     const payDate = (doItem && doItem.Payment_Date) ? doItem.Payment_Date : inv.Date_Created;
     addIncome(payDate, Number(inv.Total_Amount) || 0);
+  });
+
+  // Historical offline income (manually-tracked cash income, e.g. imported
+  // from a pre-ERP finance tracker). Recorded directly, no status filter.
+  offlineIncome.forEach(r => {
+    addIncome(r.Date, Number(r.Amount) || 0);
   });
 
   // Expense: exclude Investment
