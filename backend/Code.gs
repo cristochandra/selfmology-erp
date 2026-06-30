@@ -19,6 +19,18 @@ const SHEETS = {
   ECOMMERCE_SALES: 'Ecommerce_Sales'
 };
 
+// Warehouse identifiers. Offline + Online are existing; Clinic (Express) is new.
+// Stored as plain strings in Warehouse_Type columns, so adding this is non-breaking.
+const WAREHOUSES = {
+  OFFLINE: 'Warehouse',
+  ONLINE: 'Online Warehouse',
+  CLINIC: 'Clinic (Express)'
+};
+
+// E-commerce orders dated on/after this deduct stock. Orders before it are
+// recorded for revenue/qty analytics only (no stock movement). Inclusive.
+const ECOMMERCE_STOCK_CUTOVER = '2026-06-25';
+
 // ============================================================
 // ROUTING – supports both GET (?payload=) and POST
 // ============================================================
@@ -50,6 +62,7 @@ function handleRequest(e) {
       case 'getInventoryOut':     result = getInventoryOut(); break;
       case 'addInventoryOut':     result = addInventoryOut(data); break;
       case 'bulkAddInventoryOut': result = bulkAddInventoryOut(data); break;
+      case 'getEcommerceOrderIds': result = getEcommerceOrderIds(); break;
       case 'resetOnlineTransactions': result = resetOnlineTransactions(); break;
       case 'moveStock':           result = moveStock(data); break;
       case 'getStockSummary':     result = { success: true, data: getStockSummaryInternal() }; break;
@@ -78,6 +91,7 @@ function handleRequest(e) {
       case 'addCustomer':         result = addCustomer(data); break;
       case 'updateCustomer':      result = updateCustomer(data); break;
       case 'generateDummyData':   result = generateDummyData(); break;
+      case 'migrateSchemaV2':     result = migrateSchemaV2(); break;
       default:
         result = { success: false, error: 'Unknown action: ' + action };
     }
@@ -113,6 +127,32 @@ function appendRow(sheetName, rowData, headers) {
   const sheet = getSheet(sheetName);
   const row = headers.map(h => rowData[h] !== undefined ? rowData[h] : '');
   sheet.appendRow(row);
+}
+
+// Safely make sure a sheet has the given header columns. Missing ones are
+// APPENDED at the end of the header row — existing columns, order, and data
+// are never touched. This is what keeps new fields backward-compatible: read
+// (getSheetData) is header-name based, and writes (appendRow) stay aligned
+// because both code and sheet grow at the end.
+function ensureColumns(sheetName, requiredHeaders) {
+  const sheet = getSheet(sheetName);
+  if (!sheet) return;
+  const lastCol = sheet.getLastColumn();
+  const existing = lastCol > 0 ? sheet.getRange(1, 1, 1, lastCol).getValues()[0] : [];
+  const toAdd = requiredHeaders.filter(h => existing.indexOf(h) === -1);
+  if (toAdd.length > 0) {
+    sheet.getRange(1, existing.length + 1, 1, toAdd.length).setValues([toAdd]);
+  }
+}
+
+// One-shot migration to add every new column this version introduces.
+// Safe to run repeatedly (idempotent). Call from the Apps Script editor once
+// after pasting the new code, or it runs lazily on first dashboard load.
+function migrateSchemaV2() {
+  ensureColumns(SHEETS.INVOICES, ['Payment_Date']);
+  ensureColumns(SHEETS.DELIVERY_ORDERS, ['Payment_Date']);
+  ensureColumns(SHEETS.ECOMMERCE_SALES, ['Net_Revenue', 'Warehouse_Type']);
+  return { success: true, message: 'Schema ensured (Payment_Date, Net_Revenue, Warehouse_Type).' };
 }
 
 function generateId(prefix) {
@@ -246,13 +286,14 @@ function addInventoryOut(data) {
     if (!data.Warehouse_Type) data.Warehouse_Type = 'Warehouse';
     data.Quantity = Number(data.Quantity) || 0;
 
-    // Check availability for Offline Warehouse
-    if (data.Warehouse_Type === 'Warehouse') {
+    // Check availability for Offline + Clinic (both are physically managed and
+    // must not go negative). Online keeps allowing negatives (CSV opname flow).
+    if (data.Warehouse_Type === WAREHOUSES.OFFLINE || data.Warehouse_Type === WAREHOUSES.CLINIC) {
       const summary = getStockSummaryInternal();
-      const available = summary.find(s => s.SKU === data.SKU && s.Warehouse_Type === 'Warehouse' && s.Batch_Number === data.Batch_Number);
+      const available = summary.find(s => s.SKU === data.SKU && s.Warehouse_Type === data.Warehouse_Type && s.Batch_Number === data.Batch_Number);
       const currentQty = available ? available.Qty : 0;
       if (currentQty < data.Quantity) {
-        return { success: false, error: `Insufficient stock in Offline Warehouse for Batch ${data.Batch_Number}. Available: ${currentQty}` };
+        return { success: false, error: `Insufficient stock in ${data.Warehouse_Type} for Batch ${data.Batch_Number}. Available: ${currentQty}` };
       }
     }
 
@@ -290,6 +331,14 @@ function moveStock(data) {
   return inResult;
 }
 
+// Returns existing `${Order_ID}|${SKU}` keys so the CSV importer can skip
+// already-imported lines (works for pre-cutover revenue-only rows too).
+function getEcommerceOrderIds() {
+  const sales = getSheetData(SHEETS.ECOMMERCE_SALES) || [];
+  const ids = sales.map(s => `${String(s.Order_ID || '').trim()}|${String(s.SKU || '').trim()}`);
+  return { success: true, data: ids };
+}
+
 function bulkAddInventoryOut(data) {
   const rows = data.rows || [];
   const rawSales = data.rawSales || [];
@@ -319,17 +368,22 @@ function bulkAddInventoryOut(data) {
       salesSheet = ss.insertSheet(SHEETS.ECOMMERCE_SALES);
     }
     
-    // Define standard headers for ecommerce sales
+    // Define standard headers for ecommerce sales.
+    // Net_Revenue = Harga Setelah Diskon - Voucher Ditanggung Penjual (income basis).
+    // Warehouse_Type = routed warehouse (Online / Clinic Express) for this order.
     const salesHeaders = [
-      'Order_ID', 'Date', 'Channel', 'SKU', 'Product_Name', 
-      'Variation_Name', 'Quantity', 'Raw_Quantity', 
+      'Order_ID', 'Date', 'Channel', 'SKU', 'Product_Name',
+      'Variation_Name', 'Quantity', 'Raw_Quantity',
       'Price', 'Total_Price', 'Status', 'Shipping_Carrier',
-      'Import_Date'
+      'Import_Date', 'Net_Revenue', 'Warehouse_Type'
     ];
-    
+
     // Check if sheet is brand new (needs headers)
     if (salesSheet.getLastRow() === 0) {
       salesSheet.getRange(1, 1, 1, salesHeaders.length).setValues([salesHeaders]);
+    } else {
+      // Existing sheet: append any missing new columns without disturbing data
+      ensureColumns(SHEETS.ECOMMERCE_SALES, ['Net_Revenue', 'Warehouse_Type']);
     }
     
     const importDateStr = formatDate(new Date());
@@ -792,13 +846,31 @@ function getCustomers() { return { success: true, data: getSheetData(SHEETS.CUST
 // ============================================================
 
 function getDashboardData(options) {
+  options = options || {};
+  // Lazily ensure new columns exist (idempotent, safe). Wrapped so a failure
+  // here can never break the dashboard.
+  try { migrateSchemaV2(); } catch (e) {}
+
   const master = getSheetData(SHEETS.MASTER_DATA);
   const invSummary = getStockSummaryInternal();
   const invoices = getSheetData(SHEETS.INVOICES);
   const invOut = getSheetData(SHEETS.INVENTORY_OUT);
   const deliveryOrders = getSheetData(SHEETS.DELIVERY_ORDERS);
-  
-  const todayStr = formatDate(new Date());
+  const ecommerceSales = getSheetData(SHEETS.ECOMMERCE_SALES) || [];
+  const expensesData = getSheetData(SHEETS.EXPENSES) || [];
+
+  const now = new Date();
+  const todayStr = formatDate(now);
+
+  // Default range = month-to-date (1st of current month → today) so the
+  // dashboard shows the current month on login, not all-time totals.
+  const channelFilter = options.channel || '';
+  let dateFrom = options.dateFrom || '';
+  let dateTo = options.dateTo || '';
+  if (!dateFrom && !dateTo) {
+    dateFrom = formatDate(new Date(now.getFullYear(), now.getMonth(), 1));
+    dateTo = todayStr;
+  }
   
   // Pending Invoices logic - check both Invoices and Delivery Orders sheets
   const pendingInvoices = invoices.filter(inv => {
@@ -820,49 +892,53 @@ function getDashboardData(options) {
 
   const stockDetails = master.map(p => {
     const skuSummary = invSummary.filter(s => String(s.SKU).trim() === String(p.SKU).trim());
-    const offlineQty = skuSummary.filter(s => String(s.Warehouse_Type).trim() === 'Warehouse').reduce((sum, s) => sum + (Number(s.Qty) || 0), 0);
-    const onlineQty = skuSummary.filter(s => String(s.Warehouse_Type).trim() !== 'Warehouse').reduce((sum, s) => sum + (Number(s.Qty) || 0), 0);
+    const sumWh = (wh) => skuSummary.filter(s => String(s.Warehouse_Type).trim() === wh).reduce((sum, s) => sum + (Number(s.Qty) || 0), 0);
+    const offlineQty = sumWh(WAREHOUSES.OFFLINE);
+    const clinicQty = sumWh(WAREHOUSES.CLINIC);
+    // Online = everything that isn't Offline or Clinic (keeps legacy values working)
+    const onlineQty = skuSummary
+      .filter(s => { const w = String(s.Warehouse_Type).trim(); return w !== WAREHOUSES.OFFLINE && w !== WAREHOUSES.CLINIC; })
+      .reduce((sum, s) => sum + (Number(s.Qty) || 0), 0);
     return {
       SKU: p.SKU,
       Product_Name: p.Product_Name,
       offlineStock: offlineQty,
-      onlineStock: onlineQty
+      onlineStock: onlineQty,
+      clinicStock: clinicQty
     };
   });
 
   const lowStockOnlineCount = stockDetails.filter(s => s.onlineStock < 10).length;
 
-  const channelFilter = options.channel || '';
-  const dateFrom = options.dateFrom || '';
-  const dateTo = options.dateTo || '';
+  // ---- Top selling (qty) ----
+  // B2B qty comes from Inventory_Out (Reason 'B2B Sales'); online qty comes from
+  // Ecommerce_Sales (all dates). We deliberately do NOT read Inventory_Out
+  // 'Online Sales' rows here, because the same orders already live in
+  // Ecommerce_Sales — that would double-count post-cutover sales.
   const salesMap = {};
-  
-  invOut.forEach(r => {
-    if (r.Reason && (r.Reason === 'B2B Sales' || r.Reason === 'Online Sales')) {
-      if (channelFilter === 'online' && r.Reason !== 'Online Sales') return;
-      if (channelFilter === 'b2b' && r.Reason !== 'B2B Sales') return;
+  const addSale = (sku, qty) => {
+    if (!sku) return;
+    if (!salesMap[sku]) salesMap[sku] = { SKU: sku, totalSold: 0 };
+    salesMap[sku].totalSold += Number(qty) || 0;
+  };
 
+  if (channelFilter !== 'online') {
+    invOut.forEach(r => {
+      if (r.Reason !== 'B2B Sales') return;
       const rDate = r.Date ? formatDate(r.Date) : '';
       if (dateFrom && rDate < dateFrom) return;
       if (dateTo && rDate > dateTo) return;
-
-      if (!salesMap[r.SKU]) salesMap[r.SKU] = { SKU: r.SKU, totalSold: 0 };
-      salesMap[r.SKU].totalSold += Number(r.Quantity) || 0;
-    }
-  });
-
-  // For online sales before 2026-06-24, read from Ecommerce_Sales (since they didn't deduct inventory and are not in invOut)
+      addSale(r.SKU, r.Quantity);
+    });
+  }
   if (channelFilter !== 'b2b') {
-    const ecommerceSales = getSheetData(SHEETS.ECOMMERCE_SALES) || [];
     ecommerceSales.forEach(r => {
+      const status = String(r.Status || '').toLowerCase();
+      if (status.indexOf('batal') !== -1) return; // exclude cancelled
       const rDate = r.Date ? formatDate(r.Date) : '';
-      if (rDate && rDate >= '2026-06-24') return; // Handled via invOut Online Sales
-      
       if (dateFrom && rDate < dateFrom) return;
       if (dateTo && rDate > dateTo) return;
-
-      if (!salesMap[r.SKU]) salesMap[r.SKU] = { SKU: r.SKU, totalSold: 0 };
-      salesMap[r.SKU].totalSold += Number(r.Quantity) || 0;
+      addSale(r.SKU, r.Quantity);
     });
   }
   const topSelling = Object.values(salesMap).sort((a, b) => b.totalSold - a.totalSold).slice(0, 10)
@@ -880,36 +956,38 @@ function getDashboardData(options) {
     Product_Name: master.find(m => m.SKU === s.SKU)?.Product_Name || s.SKU
   }));
 
-  // Expenses calculation (excluding Category 'Investment')
-  const expensesData = getSheetData(SHEETS.EXPENSES) || [];
+  // ---- Expenses (month-to-date, excluding 'Investment') ----
   let totalExpenses = 0;
   const expenseBreakdownMap = {};
-  
   expensesData.forEach(e => {
     const category = String(e.Category || '').trim();
     if (category.toLowerCase() === 'investment') return;
-    
     const eDate = e.Date ? formatDate(e.Date) : '';
     if (dateFrom && eDate < dateFrom) return;
     if (dateTo && eDate > dateTo) return;
-    
     const amount = Number(e.Amount) || 0;
     totalExpenses += amount;
-    
     const catName = category || 'Other';
-    if (!expenseBreakdownMap[catName]) expenseBreakdownMap[catName] = 0;
-    expenseBreakdownMap[catName] += amount;
+    expenseBreakdownMap[catName] = (expenseBreakdownMap[catName] || 0) + amount;
   });
-  
   const expenseBreakdown = Object.keys(expenseBreakdownMap)
     .map(cat => ({ Category: cat, Amount: expenseBreakdownMap[cat] }))
     .sort((a, b) => b.Amount - a.Amount);
+
+  // ---- Cashflow: Income vs Expense, last 12 months ----
+  const cashflow = computeCashflowSeries({
+    months: 12, now: now,
+    invoices: invoices, deliveryOrders: deliveryOrders,
+    ecommerceSales: ecommerceSales, expensesData: expensesData
+  });
+  const thisMonthKey = Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM');
+  const thisMonthCash = cashflow.find(c => c.month === thisMonthKey) || { income: 0, expense: 0 };
 
   return {
     success: true,
     data: {
       totalSKUs: master.length,
-      totalStockUnits: stockDetails.reduce((sum, s) => sum + s.offlineStock + s.onlineStock, 0),
+      totalStockUnits: stockDetails.reduce((sum, s) => sum + s.offlineStock + s.onlineStock + (s.clinicStock || 0), 0),
       lowStockOnlineCount: lowStockOnlineCount,
       overdueCount: overdueCount,
       stockDetails: stockDetails,
@@ -917,9 +995,70 @@ function getDashboardData(options) {
       topSelling: topSelling,
       expiringBatches: expiringBatches,
       totalExpenses: totalExpenses,
-      expenseBreakdown: expenseBreakdown
+      totalIncome: thisMonthCash.income,
+      expenseBreakdown: expenseBreakdown,
+      cashflow: cashflow,
+      dateFrom: dateFrom,
+      dateTo: dateTo
     }
   };
+}
+
+// Build a [{month:'YYYY-MM', label:'Mon yy', income, expense}] series for the
+// last N months. Income = online (Ecommerce_Sales, 'Selesai' net revenue) +
+// B2B (paid invoices, placed by payment-received date). Expense excludes
+// 'Investment' to match the operational expense figure used elsewhere.
+function computeCashflowSeries(args) {
+  const now = args.now;
+  const invoices = args.invoices || [];
+  const deliveryOrders = args.deliveryOrders || [];
+  const ecommerceSales = args.ecommerceSales || [];
+  const expensesData = args.expensesData || [];
+  const months = args.months || 12;
+  const tz = Session.getScriptTimeZone();
+  const monthKeyOf = (d) => { try { return Utilities.formatDate(new Date(d), tz, 'yyyy-MM'); } catch (e) { return ''; } };
+
+  const buckets = {};
+  const order = [];
+  for (let i = months - 1; i >= 0; i--) {
+    const dt = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const key = Utilities.formatDate(dt, tz, 'yyyy-MM');
+    buckets[key] = { month: key, label: Utilities.formatDate(dt, tz, 'MMM yy'), income: 0, expense: 0 };
+    order.push(key);
+  }
+  const addIncome = (dateStr, amt) => { const k = monthKeyOf(dateStr); if (buckets[k]) buckets[k].income += Number(amt) || 0; };
+  const addExpense = (dateStr, amt) => { const k = monthKeyOf(dateStr); if (buckets[k]) buckets[k].expense += Number(amt) || 0; };
+
+  // Online income: completed ('Selesai') only, net revenue.
+  ecommerceSales.forEach(r => {
+    const status = String(r.Status || '').toLowerCase();
+    if (status.indexOf('selesai') === -1 && status.indexOf('completed') === -1) return;
+    let net = Number(r.Net_Revenue);
+    if (!(net || net === 0)) net = Number(r.Total_Price) || 0;
+    if (isNaN(net)) net = 0;
+    addIncome(r.Date, net);
+  });
+
+  // B2B income: paid invoices, dated by payment received (DO Payment_Date) or
+  // invoice creation date as fallback.
+  const doByInvoice = {};
+  deliveryOrders.forEach(d => { const inv = String(d.Invoice_ID || '').trim(); if (inv) doByInvoice[inv] = d; });
+  invoices.forEach(inv => {
+    if (String(inv.Status || '') === 'Cancelled') return;
+    const doItem = doByInvoice[String(inv.Invoice_ID || '').trim()];
+    const isPaid = (doItem && doItem.Payment_Status === 'Paid') || inv.Payment_Status === 'Paid';
+    if (!isPaid) return;
+    const payDate = (doItem && doItem.Payment_Date) ? doItem.Payment_Date : inv.Date_Created;
+    addIncome(payDate, Number(inv.Total_Amount) || 0);
+  });
+
+  // Expense: exclude Investment
+  expensesData.forEach(e => {
+    if (String(e.Category || '').trim().toLowerCase() === 'investment') return;
+    addExpense(e.Date, Number(e.Amount) || 0);
+  });
+
+  return order.map(k => buckets[k]);
 }
 
 // ============================================================

@@ -50,7 +50,7 @@ const Dashboard = {
     } catch (err) {
       console.error('Dashboard Load Error:', err);
       // Show empty state instead of freezing
-      this.data = { totalSKUs: 0, totalStockUnits: 0, overdueCount: 0, lowStockOnlineCount: 0, stockDetails: [], topPendingInvoices: [], topSelling: [], expiringBatches: [] };
+      this.data = { totalSKUs: 0, totalStockUnits: 0, overdueCount: 0, lowStockOnlineCount: 0, stockDetails: [], topPendingInvoices: [], topSelling: [], expiringBatches: [], totalExpenses: 0, totalIncome: 0, expenseBreakdown: [], cashflow: [] };
       this.render();
     }
   },
@@ -66,6 +66,17 @@ const Dashboard = {
     if (kpiExpenses) {
       kpiExpenses.textContent = App.formatCurrency(d.totalExpenses || 0);
     }
+
+    const kpiIncome = document.getElementById('kpi-income');
+    if (kpiIncome) {
+      kpiIncome.textContent = App.formatCurrency(d.totalIncome || 0);
+    }
+
+    // Reflect the active date range (defaults to month-to-date from backend)
+    const fromInput = document.getElementById('dash-date-from');
+    const toInput = document.getElementById('dash-date-to');
+    if (fromInput && !fromInput.value && d.dateFrom) fromInput.value = d.dateFrom;
+    if (toInput && !toInput.value && d.dateTo) toInput.value = d.dateTo;
 
     // Show alerts if any
     const alertContainer = document.getElementById('dashboard-alerts');
@@ -87,6 +98,9 @@ const Dashboard = {
       }
       alertContainer.innerHTML = alertsHtml;
     }
+
+    // Cashflow (Income vs Expense) chart
+    this.renderCashflow(d.cashflow);
 
     // Top Selling Chart
     this.renderTopSelling(d.topSelling);
@@ -159,21 +173,76 @@ const Dashboard = {
   renderStockTable(items) {
     const tbody = document.getElementById('stock-table-body');
     if (!items || items.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="4" class="text-center text-secondary" style="padding:24px;">No data</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="5" class="text-center text-secondary" style="padding:24px;">No data</td></tr>';
       return;
     }
 
     tbody.innerHTML = items.map(item => {
+      const clinic = item.clinicStock || 0;
       const offlineClass = item.offlineStock <= 10 ? 'badge-low-stock' : 'badge-in-stock';
       const onlineClass = item.onlineStock <= 10 ? 'badge-low-stock' : 'badge-in-stock';
+      const clinicClass = clinic <= 10 ? 'badge-low-stock' : 'badge-in-stock';
       return `
         <tr>
           <td><strong>${item.SKU}</strong></td>
           <td>${item.Product_Name}</td>
           <td><span class="badge ${offlineClass}">${item.offlineStock}</span></td>
           <td><span class="badge ${onlineClass}">${item.onlineStock}</span></td>
+          <td><span class="badge ${clinicClass}">${clinic}</span></td>
         </tr>`;
     }).join('');
+  },
+
+  renderCashflow(items) {
+    const container = document.getElementById('cashflow-chart');
+    if (!container) return;
+    if (!items || items.length === 0) {
+      container.innerHTML = `
+        <div class="empty-state">
+          <div class="empty-state-icon">📈</div>
+          <p class="empty-state-text">No cashflow data yet</p>
+        </div>`;
+      return;
+    }
+
+    const max = Math.max(1, ...items.map(i => Math.max(Number(i.income) || 0, Number(i.expense) || 0)));
+    const bars = items.map(m => {
+      const inc = Number(m.income) || 0;
+      const exp = Number(m.expense) || 0;
+      const incH = Math.round((inc / max) * 100);
+      const expH = Math.round((exp / max) * 100);
+      const net = inc - exp;
+      const netColor = net >= 0 ? 'var(--color-mint)' : 'var(--color-red)';
+      return `
+        <div style="flex:1; min-width:0; display:flex; flex-direction:column; align-items:center; gap:6px;">
+          <div title="Income ${App.formatCurrency(inc)} · Expense ${App.formatCurrency(exp)} · Net ${App.formatCurrency(net)}"
+               style="display:flex; align-items:flex-end; justify-content:center; gap:3px; height:150px; width:100%;">
+            <div style="width:42%; max-width:18px; height:${incH}%; min-height:2px; background:var(--color-mint); border-radius:4px 4px 0 0;"></div>
+            <div style="width:42%; max-width:18px; height:${expH}%; min-height:2px; background:var(--color-red); border-radius:4px 4px 0 0;"></div>
+          </div>
+          <div class="text-xs text-secondary" style="white-space:nowrap;">${m.label || m.month}</div>
+          <div class="text-xs" style="font-weight:600; color:${netColor};">${this.shortCurrency(net)}</div>
+        </div>`;
+    }).join('');
+
+    container.innerHTML = `
+      <div style="display:flex; gap:16px; align-items:center; margin-bottom:14px; font-size:12px;">
+        <span style="display:flex; align-items:center; gap:6px;"><span style="width:12px; height:12px; border-radius:3px; background:var(--color-mint); display:inline-block;"></span>Income</span>
+        <span style="display:flex; align-items:center; gap:6px;"><span style="width:12px; height:12px; border-radius:3px; background:var(--color-red); display:inline-block;"></span>Expense</span>
+        <span class="text-xs text-secondary" style="margin-left:auto;">Net shown below each month</span>
+      </div>
+      <div style="display:flex; gap:8px; align-items:flex-end; overflow-x:auto; padding-bottom:4px;">
+        ${bars}
+      </div>`;
+  },
+
+  shortCurrency(n) {
+    const abs = Math.abs(n);
+    const sign = n < 0 ? '-' : '';
+    if (abs >= 1e9) return `${sign}${(abs / 1e9).toFixed(1)}B`;
+    if (abs >= 1e6) return `${sign}${(abs / 1e6).toFixed(1)}M`;
+    if (abs >= 1e3) return `${sign}${Math.round(abs / 1e3)}K`;
+    return `${sign}${abs}`;
   },
 
   renderPendingInvoices(items) {

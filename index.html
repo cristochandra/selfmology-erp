@@ -24,25 +24,34 @@
   <!-- LOGIN SCREEN -->
   <!-- ================================================== -->
   <div id="login-screen" class="login-screen">
-    <div class="login-logo-container" style="margin-bottom: 24px;">
-      <div style="display:flex; align-items:center; gap:4px;">
-        <span style="font-size:48px; font-weight:900; letter-spacing:-2px; color:var(--text-primary);">Selfmology</span>
-        <div style="width:36px; height:18px; border-bottom:6px solid var(--color-primary); border-radius:0 0 50% 50%; margin-bottom:12px;"></div>
+    <div class="login-brand-panel">
+      <div class="login-brand-word">
+        <span>Selfmology</span>
+        <span class="login-brand-mark"></span>
       </div>
+      <p class="login-brand-tagline">Internal ERP — inventory, invoicing, and operations in one place.</p>
     </div>
-    <p class="login-subtitle">Internal ERP System</p>
-    <form class="login-form" id="login-form" onsubmit="return false;">
-      <div class="form-group">
-        <label class="form-label">Email</label>
-        <input type="email" id="login-email" class="form-input" placeholder="you@selfmology.com" required>
+    <div class="login-form-panel">
+      <div class="login-logo-container" style="margin-bottom: 24px;">
+        <div style="display:flex; align-items:center; gap:4px;">
+          <span style="font-size:48px; font-weight:900; letter-spacing:-2px; color:var(--text-primary);">Selfmology</span>
+          <div style="width:36px; height:18px; border-bottom:6px solid var(--color-primary); border-radius:0 0 50% 50%; margin-bottom:12px;"></div>
+        </div>
       </div>
-      <div class="form-group">
-        <label class="form-label">Password</label>
-        <input type="password" id="login-password" class="form-input" placeholder="Enter password" required>
-      </div>
-      <button type="submit" class="btn btn-primary btn-lg btn-full" id="login-btn">Sign In</button>
-      <p class="text-center text-xs text-secondary mt-md">Default: admin@selfmology.com / admin123</p>
-    </form>
+      <p class="login-subtitle">Internal ERP System</p>
+      <form class="login-form" id="login-form" onsubmit="return false;">
+        <div class="form-group">
+          <label class="form-label">Email</label>
+          <input type="email" id="login-email" class="form-input" placeholder="you@selfmology.com" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Password</label>
+          <input type="password" id="login-password" class="form-input" placeholder="Enter password" required>
+        </div>
+        <button type="submit" class="btn btn-primary btn-lg btn-full" id="login-btn">Sign In</button>
+        <p class="text-center text-xs text-secondary mt-md">Default: admin@selfmology.com / admin123</p>
+      </form>
+    </div>
   </div>
 
   <!-- ================================================== -->
@@ -55,7 +64,7 @@
       <div class="top-bar-content">
         <div onclick="App.navigate('dashboard')" style="cursor: pointer;">
           <div class="top-bar-subtitle" id="top-bar-subtitle">Dashboard</div>
-          <div style="display:flex; align-items:center; gap:2px; margin-top:2px;">
+          <div class="topbar-brandmark" style="display:flex; align-items:center; gap:2px; margin-top:2px;">
             <span style="font-size:20px; font-weight:900; letter-spacing:-0.5px;">Selfmology</span>
             <div style="width:14px; height:7px; border-bottom:3px solid var(--color-primary); border-radius:0 0 50% 50%; margin-bottom:4px;"></div>
           </div>
@@ -69,7 +78,6 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
           </button>
         </div>
-      </div>
     </header>
 
     <!-- Main Content Area -->
@@ -85,7 +93,7 @@
 
         <div id="dashboard-alerts"></div>
 
-        <div class="kpi-grid" id="kpi-grid" style="grid-template-columns: repeat(3, 1fr);">
+        <div class="kpi-grid" id="kpi-grid" style="grid-template-columns: repeat(4, 1fr);">
           <div class="kpi-card">
             <div class="kpi-icon yellow">📦</div>
             <div class="kpi-value" id="kpi-skus">0</div>
@@ -97,28 +105,42 @@
             <div class="kpi-label">Stock Units</div>
           </div>
           <div class="kpi-card">
+            <div class="kpi-icon" style="background:var(--color-mint-light); color:var(--color-mint);">💰</div>
+            <div class="kpi-value" id="kpi-income" style="color:var(--color-mint);">Rp 0</div>
+            <div class="kpi-label">Income (This Month)</div>
+          </div>
+          <div class="kpi-card">
             <div class="kpi-icon red" style="background:var(--color-red-light); color:var(--color-red);">💸</div>
             <div class="kpi-value" id="kpi-expenses">Rp 0</div>
-            <div class="kpi-label">Total Expenses</div>
+            <div class="kpi-label">Expenses (This Month)</div>
           </div>
         </div>
-
-        <div class="section-header mt-lg" style="display:flex; justify-content:space-between; align-items:center;">
-          <h2 class="section-title" style="margin:0;">Top Selling SKUs</h2>
-          <div style="display:flex; background:var(--bg-secondary); padding:2px; border-radius:6px; gap:2px;">
-            <button class="btn btn-xs active" id="dash-chan-all" onclick="Dashboard.setChannel('')" style="font-size:10px; padding:4px 8px; border-radius:4px;">All</button>
-            <button class="btn btn-xs" id="dash-chan-online" onclick="Dashboard.setChannel('online')" style="font-size:10px; padding:4px 8px; border-radius:4px; background:transparent; color:var(--text-secondary);">Online</button>
-            <button class="btn btn-xs" id="dash-chan-b2b" onclick="Dashboard.setChannel('b2b')" style="font-size:10px; padding:4px 8px; border-radius:4px; background:transparent; color:var(--text-secondary);">B2B</button>
-          </div>
-        </div>
-        <div id="top-selling-chart" class="bar-chart mb-xl"></div>
 
         <div class="section-header mt-lg">
-          <h2 class="section-title" style="margin:0;">Expenses by Category (Excl. Investment)</h2>
+          <h2 class="section-title" style="margin:0;">Cashflow — Income vs Expense (Monthly)</h2>
         </div>
-        <div id="expense-breakdown-chart" class="bar-chart mb-xl"></div>
+        <div id="cashflow-chart" class="card mb-xl" style="padding:18px;"></div>
 
+        <div class="dash-charts">
+          <div class="dash-col">
+            <div class="section-header mt-lg" style="display:flex; justify-content:space-between; align-items:center;">
+              <h2 class="section-title" style="margin:0;">Top Selling SKUs</h2>
+              <div style="display:flex; background:var(--bg-secondary); padding:2px; border-radius:6px; gap:2px;">
+                <button class="btn btn-xs active" id="dash-chan-all" onclick="Dashboard.setChannel('')" style="font-size:10px; padding:4px 8px; border-radius:4px;">All</button>
+                <button class="btn btn-xs" id="dash-chan-online" onclick="Dashboard.setChannel('online')" style="font-size:10px; padding:4px 8px; border-radius:4px; background:transparent; color:var(--text-secondary);">Online</button>
+                <button class="btn btn-xs" id="dash-chan-b2b" onclick="Dashboard.setChannel('b2b')" style="font-size:10px; padding:4px 8px; border-radius:4px; background:transparent; color:var(--text-secondary);">B2B</button>
+              </div>
+            </div>
+            <div id="top-selling-chart" class="bar-chart mb-xl"></div>
+          </div>
 
+          <div class="dash-col">
+            <div class="section-header mt-lg">
+              <h2 class="section-title" style="margin:0;">Expenses by Category (Excl. Investment)</h2>
+            </div>
+            <div id="expense-breakdown-chart" class="bar-chart mb-xl"></div>
+          </div>
+        </div>
 
         <div class="section-header">
           <h2 class="section-title">Stock Overview</h2>
@@ -126,7 +148,7 @@
         <div class="table-wrapper mb-xl" id="stock-table-wrapper">
           <table class="data-table" id="stock-table">
             <thead>
-              <tr><th>SKU</th><th>Product</th><th>Offline WH</th><th>Online WH</th></tr>
+              <tr><th>SKU</th><th>Product</th><th>Offline WH</th><th>Online WH</th><th>Clinic (Express)</th></tr>
             </thead>
             <tbody id="stock-table-body"></tbody>
           </table>
@@ -239,6 +261,7 @@
                 <select id="si-warehouse" class="form-select">
                   <option value="Warehouse">Warehouse (Offline)</option>
                   <option value="Online Warehouse">Online Warehouse</option>
+                  <option value="Clinic (Express)">Clinic (Express)</option>
                 </select>
               </div>
               <div class="form-group">
@@ -268,9 +291,10 @@
             <div class="form-row">
               <div class="form-group">
                 <label class="form-label">From</label>
-                <select id="sm-from" class="form-select" required>
+                <select id="sm-from" class="form-select" required onchange="Inventory.loadBatchDropdown('sm')">
                   <option value="Warehouse">Warehouse (Offline)</option>
                   <option value="Online Warehouse">Online Warehouse</option>
+                  <option value="Clinic (Express)">Clinic (Express)</option>
                 </select>
               </div>
               <div class="form-group">
@@ -278,6 +302,7 @@
                 <select id="sm-to" class="form-select" required>
                   <option value="Online Warehouse">Online Warehouse</option>
                   <option value="Warehouse">Warehouse (Offline)</option>
+                  <option value="Clinic (Express)">Clinic (Express)</option>
                 </select>
               </div>
             </div>
@@ -313,9 +338,10 @@
                 </div>
                 <div class="form-group">
                   <label class="form-label">Warehouse</label>
-                  <select id="so-warehouse" class="form-select" required>
+                  <select id="so-warehouse" class="form-select" required onchange="Inventory.loadBatchDropdown('so')">
                     <option value="Warehouse">Warehouse (Offline)</option>
                     <option value="Online Warehouse">Online Warehouse</option>
+                    <option value="Clinic (Express)">Clinic (Express)</option>
                   </select>
                 </div>
               </div>
@@ -443,6 +469,10 @@
 
     <!-- Bottom Navigation – 5-6 items, horizontal layout -->
     <nav class="bottom-nav" id="bottom-nav">
+      <div class="sidebar-brand" onclick="App.navigate('dashboard')" style="cursor:pointer;">
+        <span class="sidebar-brand-word">Selfmology</span>
+        <span class="sidebar-brand-mark"></span>
+      </div>
       <button class="nav-item active" data-page="dashboard" id="nav-dashboard">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
         <span>Dashboard</span>

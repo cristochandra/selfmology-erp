@@ -168,12 +168,13 @@ const Expenses = {
         byCat[cat] += Number(e.Amount) || 0;
       });
 
+      const clickable = m.month !== 'Unknown' && m.month.includes('-');
       return `
-        <div class="card" style="margin-bottom:12px;">
+        <div class="card" style="margin-bottom:12px; ${clickable ? 'cursor:pointer;' : ''}" ${clickable ? `onclick="Expenses.drillMonth('${m.month}')"` : ''}>
           <div class="flex-between mb-md">
             <div>
               <div class="text-sm text-bold">${monthName}</div>
-              <div class="text-xs text-secondary">${m.items.length} transaction${m.items.length !== 1 ? 's' : ''}</div>
+              <div class="text-xs text-secondary">${m.items.length} transaction${m.items.length !== 1 ? 's' : ''}${clickable ? ' · tap to view' : ''}</div>
             </div>
             <span class="text-bold" style="font-size:16px;color:var(--color-red);">${App.formatCurrency(m.total)}</span>
           </div>
@@ -184,6 +185,25 @@ const Expenses = {
           </div>
         </div>`;
     }).join('');
+  },
+
+  // Drill from the monthly summary into all transactions of that month.
+  drillMonth(monthKey) {
+    if (!monthKey || monthKey.indexOf('-') === -1) return;
+    const [year, month] = monthKey.split('-');
+    const from = `${year}-${month}-01`;
+    const lastDay = new Date(parseInt(year, 10), parseInt(month, 10), 0).getDate();
+    const to = `${year}-${month}-${String(lastDay).padStart(2, '0')}`;
+    const fromEl = document.getElementById('exp-filter-from');
+    const toEl = document.getElementById('exp-filter-to');
+    if (fromEl) fromEl.value = from;
+    if (toEl) toEl.value = to;
+    this.viewMode = 'all';
+    const tabs = document.querySelectorAll('#page-expenses > .tabs .tab');
+    tabs.forEach((t, i) => t.classList.toggle('active', i === 0));
+    this.applyFilter();
+    const container = document.getElementById('expenses-list');
+    if (container && container.scrollIntoView) container.scrollIntoView({ behavior: 'smooth', block: 'start' });
   },
 
   getCategoryEmoji(cat) {

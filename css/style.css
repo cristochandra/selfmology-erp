@@ -1396,81 +1396,235 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
 ::-webkit-scrollbar-thumb:hover { background: var(--border-medium); }
 
 /* ============================================================
-   DESKTOP / TABLET RESPONSIVE
+   DESKTOP / WEB LAYOUT
+   Below 1024px the app stays exactly as the mobile build.
+   At 1024px+ the floating bottom nav becomes a left sidebar and
+   the top bar becomes a workbench header. Layout only — no JS,
+   no markup logic, no backend touched.
    ============================================================ */
 
-/* Tablet: 768px+ */
-@media (min-width: 768px) {
-  .app-container { max-width: 100%; }
-  .page-content { padding: 24px 32px 100px; }
-  .top-bar { padding: 16px 32px; }
-
-  .kpi-grid { grid-template-columns: repeat(4, 1fr); }
-  .form-row { grid-template-columns: 1fr 1fr; }
-
-  .list-item { padding: 16px 20px; }
-  .card { padding: 24px; }
-
-  .data-table th, .data-table td { padding: 12px 16px; font-size: 14px; }
-
-  .bottom-nav .nav-item { min-width: 80px; }
-  .bottom-nav .nav-item span { font-size: 11px; }
+/* Desktop-only shell pieces are hidden by default (mobile) */
+.sidebar-brand { display: none; }
+.login-brand-panel { display: none; }
+.login-form-panel {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 }
 
-/* Desktop: 1024px+ */
+/* Tablet: widen the column and go 2-col forms — keeps bottom nav */
+@media (min-width: 768px) and (max-width: 1023.98px) {
+  #app-container { max-width: 720px; }
+  .form-row { grid-template-columns: 1fr 1fr; }
+  .data-table th, .data-table td { padding: 12px 16px; font-size: 14px; }
+  .card { padding: var(--space-2xl); }
+}
+
+/* Desktop: 1024px+ — sidebar + workbench */
 @media (min-width: 1024px) {
   body { background: var(--bg-secondary); }
 
-  .app-container {
-    display: flex;
-    flex-direction: column;
-    max-width: 1400px;
-    margin: 0 auto;
-    min-height: 100vh;
-    box-shadow: 0 0 60px rgba(0,0,0,0.08);
+  /* Unlock the 480px mobile cage */
+  #app-container {
+    max-width: none;
+    width: 100%;
+    margin: 0;
+    box-shadow: none;
+    background: var(--bg-secondary);
   }
 
-  .top-bar {
-    padding: 16px 40px;
+  /* Shell: [ sidebar | topbar ]
+            [ sidebar | main   ]  — grid areas, DOM order untouched */
+  #app-main {
+    display: grid;
+    grid-template-columns: 240px minmax(0, 1fr);
+    grid-template-rows: auto 1fr;
+    grid-template-areas:
+      "sidebar topbar"
+      "sidebar main";
+    min-height: 100vh;
+  }
+
+  /* ---- Left sidebar (the reskinned .bottom-nav) ---- */
+  .bottom-nav {
+    grid-area: sidebar;
+    position: sticky;
+    top: 0;
+    left: auto;
+    transform: none;
+    width: 240px;
+    max-width: none;
+    height: 100vh;
+    flex-direction: column;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    align-items: stretch;
+    gap: 2px;
+    padding: 20px 14px;
+    border: none;
+    border-right: 1px solid var(--border-light);
+    border-radius: 0;
+    background: var(--bg-primary);
+    box-shadow: none;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  .nav-item {
+    flex: 0 0 auto;
+    width: 100%;
+    min-width: 0;
+    justify-content: flex-start;
+    gap: 12px;
+    padding: 11px 14px;
+    border-radius: var(--radius-md);
+    font-size: var(--font-sm);
+  }
+  .nav-item svg { width: 20px; height: 20px; }
+  .nav-item span { opacity: 1; }
+  .nav-item:hover { background: var(--bg-secondary); }
+  .nav-item.active {
+    background: var(--color-primary-light);
+    color: var(--color-primary);
+  }
+  .nav-item.active:hover { background: var(--color-primary-light); }
+
+  /* Brand block pinned to the top of the sidebar */
+  .sidebar-brand {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    padding: 4px 12px 18px;
+    margin-bottom: 6px;
     border-bottom: 1px solid var(--border-light);
   }
-
-  /* Keep bottom nav horizontal on desktop */
-  .bottom-nav {
-    max-width: 600px;
-    bottom: 24px;
+  .sidebar-brand-word {
+    font-size: var(--font-lg);
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    color: var(--text-primary);
+  }
+  .sidebar-brand-mark {
+    width: 13px;
+    height: 7px;
+    border-bottom: 3px solid var(--color-primary);
+    border-radius: 0 0 50% 50%;
+    margin-bottom: 4px;
   }
 
-  .page-content {
-    flex: 1;
+  /* ---- Workbench top bar ---- */
+  .top-bar {
+    grid-area: topbar;
+    padding: 14px 32px;
+    border-bottom: 1px solid var(--border-light);
+  }
+  /* Hide the redundant wordmark; promote the page label to a title.
+     !important overrides the element's inline display:flex. */
+  .topbar-brandmark { display: none !important; }
+  .top-bar-subtitle {
+    font-size: var(--font-xl);
+    font-weight: 700;
+    text-transform: none;
+    letter-spacing: -0.3px;
+    color: var(--text-primary);
+  }
+  /* Group role badge + logout on the right; page title takes the slack */
+  .top-bar-content > div:first-child { flex: 1; }
 
-    padding: 32px 40px;
-    overflow-y: auto;
-    padding-bottom: 40px;
+  /* ---- Content column ---- */
+  .main-content {
+    grid-area: main;
+    width: 100%;
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 28px 40px 56px;
   }
 
-  /* Better use of space on desktop */
-  .kpi-grid { grid-template-columns: repeat(4, 1fr); gap: 20px; }
-  .chart-bar-fill { height: 24px; }
+  /* Density */
+  .kpi-grid { gap: var(--space-lg); }
+  .card { padding: var(--space-2xl); }
+  .form-row { grid-template-columns: 1fr 1fr; }
+  .data-table th, .data-table td { padding: 12px 16px; font-size: 14px; }
 
+  /* In-page primary actions shouldn't span the whole wide canvas */
+  .main-content .btn-full { max-width: 340px; }
+
+  /* Forms read better constrained */
+  .main-content form.card { max-width: 680px; }
+
+  /* List rows gain a hover affordance on desktop */
   .list-item {
-    padding: 16px 24px;
+    padding: 16px 20px;
     transition: background 0.15s, transform 0.1s;
   }
   .list-item:hover {
     background: var(--color-primary-light);
-    transform: translateX(4px);
+    transform: translateX(3px);
   }
 
-  .modal-content { max-width: 560px; }
+  /* Dashboard: charts sit side by side */
+  .dash-charts {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-2xl);
+    align-items: start;
+  }
+  .dash-charts .bar-chart { margin-bottom: 0; }
 
-  .fab { bottom: 32px; right: 40px; }
+  .modal { max-width: 560px; }
+
+  /* ---- Login: branded split layout ---- */
+  .login-screen {
+    flex-direction: row;
+    padding: 0;
+    align-items: stretch;
+  }
+  .login-brand-panel {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    flex: 1;
+    min-height: 100vh;
+    padding: 64px;
+    background: linear-gradient(160deg, var(--color-primary-light) 0%, #FFF9E6 100%);
+  }
+  .login-brand-word {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: var(--font-3xl);
+    font-weight: 800;
+    letter-spacing: -1.5px;
+    color: var(--text-primary);
+    margin-bottom: var(--space-md);
+  }
+  .login-brand-mark {
+    width: 26px;
+    height: 13px;
+    border-bottom: 6px solid var(--color-primary);
+    border-radius: 0 0 50% 50%;
+    margin-bottom: 9px;
+  }
+  .login-brand-tagline {
+    font-size: var(--font-md);
+    color: var(--text-secondary);
+    max-width: 320px;
+    line-height: 1.6;
+  }
+  .login-form-panel {
+    flex: 1;
+    min-height: 100vh;
+    justify-content: center;
+    padding: 48px;
+  }
+  .login-form-panel .login-form,
+  .login-form-panel .login-logo-container { max-width: 340px; }
 }
 
-/* Large Desktop: 1280px+ */
-@media (min-width: 1280px) {
-  .app-container { max-width: 1600px; }
-  .page-content { padding: 40px 56px; }
+/* Large desktop: 1440px+ */
+@media (min-width: 1440px) {
+  .main-content { max-width: 1360px; padding: 32px 56px 64px; }
 }
 
 /* Alerts */

@@ -153,12 +153,14 @@ const Inventory = {
 
     const skuMap = {};
     AppState.masterData.forEach(p => {
-      skuMap[p.SKU] = { SKU: p.SKU, Product_Name: p.Product_Name, Offline: 0, Online: 0, Total: 0 };
+      skuMap[p.SKU] = { SKU: p.SKU, Product_Name: p.Product_Name, Offline: 0, Online: 0, Clinic: 0, Total: 0 };
     });
 
     this.summary.forEach(s => {
       if (skuMap[s.SKU]) {
-        if (s.Warehouse_Type === 'Warehouse') skuMap[s.SKU].Offline += Number(s.Qty);
+        const wh = String(s.Warehouse_Type).trim();
+        if (wh === 'Warehouse') skuMap[s.SKU].Offline += Number(s.Qty);
+        else if (wh === 'Clinic (Express)') skuMap[s.SKU].Clinic += Number(s.Qty);
         else skuMap[s.SKU].Online += Number(s.Qty);
         skuMap[s.SKU].Total += Number(s.Qty);
       }
@@ -181,12 +183,16 @@ const Inventory = {
         
         <div style="display: flex; gap: 12px; border-top: 1px solid var(--border-light); padding-top: 10px;">
           <div style="flex: 1;">
-            <div style="font-size: 10px; color: var(--text-tertiary);">Offline Warehouse</div>
+            <div style="font-size: 10px; color: var(--text-tertiary);">Offline WH</div>
             <div style="font-weight: 700;">${item.Offline}</div>
           </div>
           <div style="flex: 1; border-left: 1px solid var(--border-light); padding-left: 12px;">
-            <div style="font-size: 10px; color: var(--text-tertiary);">Online Warehouse</div>
+            <div style="font-size: 10px; color: var(--text-tertiary);">Online WH</div>
             <div style="font-weight: 700; color: ${item.Online < 10 ? 'var(--color-danger)' : 'var(--text-primary)'}">${item.Online}</div>
+          </div>
+          <div style="flex: 1; border-left: 1px solid var(--border-light); padding-left: 12px;">
+            <div style="font-size: 10px; color: var(--text-tertiary);">Clinic (Express)</div>
+            <div style="font-weight: 700;">${item.Clinic}</div>
           </div>
         </div>
         ${item.Online < 10 ? '<div style="margin-top: 6px; font-size: 10px; color: var(--color-danger); font-weight: 600;">⚠️ Low Online Stock</div>' : ''}
@@ -214,7 +220,7 @@ const Inventory = {
         <tbody>
           ${skuData.map(s => `
             <tr>
-              <td><span style="font-size:10px; padding:2px 6px;" class="badge ${s.Warehouse_Type === 'Warehouse' ? 'badge-staff' : 'badge-admin'}">${s.Warehouse_Type === 'Warehouse' ? 'Offline' : 'Online'}</span></td>
+              <td><span style="font-size:10px; padding:2px 6px;" class="badge ${s.Warehouse_Type === 'Warehouse' ? 'badge-staff' : 'badge-admin'}">${s.Warehouse_Type === 'Warehouse' ? 'Offline' : (String(s.Warehouse_Type).trim() === 'Clinic (Express)' ? 'Clinic' : 'Online')}</span></td>
               <td>${s.Batch_Number || '-'}</td>
               <td style="font-weight:700;">${s.Qty}</td>
               <td style="font-size: 10px;">${s.Expiry_Date || '-'}</td>
@@ -234,7 +240,7 @@ const Inventory = {
     const all = [
       ...this.inData.map(r => ({ ...r, type: 'IN', date: r.Date_Received, qty: r.Quantity })),
       ...this.outData.map(r => ({ ...r, type: 'OUT', date: r.Date, qty: r.Quantity }))
-    ].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 50);
+    ].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 150);
 
     if (all.length === 0) {
       container.innerHTML = '<div class="empty-state"><p>No history yet.</p></div>';
@@ -273,8 +279,8 @@ const Inventory = {
         </div>
         <div class="list-item-content">
           <div class="list-item-title">${row.SKU} · ${pName}</div>
-          <div class="list-item-meta">${row.date} · ${row.type === 'IN' ? 'Inbound' : (row.Reason || 'Outbound')} · <strong>${row.qty}</strong></div>
-          <div style="font-size: 10px; color: var(--text-tertiary);">Batch: ${row.Batch_Number || '-'} · ${row.Warehouse_Type || 'Warehouse'} · Ref: ${row.Reference_ID || '-'}</div>
+          <div class="list-item-meta">${row.date} · <strong style="color:${iconColor};">${isMove ? 'MOVE' : row.type}</strong> · ${row.type === 'IN' ? 'Inbound' : (row.Reason || 'Outbound')} · Qty <strong>${row.qty}</strong></div>
+          <div style="font-size: 10px; color: var(--text-tertiary);">Batch: ${row.Batch_Number || '-'} · <strong>${row.Warehouse_Type || 'Warehouse'}</strong> · Ref: ${row.Reference_ID || '-'}</div>
         </div>
       </div>
       `;
@@ -296,24 +302,64 @@ const Inventory = {
   },
 
   assignBatchFIFO(sku, qtyNeeded) {
-    // We deep clone summary locally in processUpload, but assignBatchFIFO is called there.
-    // It's safer to pass the active summary map so preview doesn't permanently modify it until confirm.
-    return []; // We'll handle this in pr  processUpload(file) {
+    return [];
+  },
+
+  // ---- E-commerce CSV mapping config ----
+  // Map Shopee "SKU Induk" (column N) -> master SKU(s). A listing can expand to
+  // multiple master SKUs (bundles). Pack size always comes from "Nama Variasi".
+  // Add new marketplace listings here without touching the parsing logic.
+  ECOMMERCE_SKU_MAP: {
+    '002': [{ sku: 'SM-OCC-100', units: 1 }],                                  // Oil Control Cleanser
+    '006': [{ sku: 'SM-OCC-100', units: 1 }],                                  // Twin Oil Control Cleanser listing
+    '011': [{ sku: 'SM-OCC-100', units: 1 }],                                  // Triple Pack Cleanser (Sabun, Salicylic)
+    '005': [{ sku: 'SM-CT-100', units: 1 }],                                   // Twin Cleansing Toner listing
+    '003': [{ sku: 'SM-OCC-100', units: 1 }, { sku: 'SM-CT-100', units: 1 }]   // Bundle = 1 OCC + 1 CT
+    // '009' (Cleansing Cotton Pads) intentionally omitted -> ignored
+  },
+
+  processUpload(file) {
     if (!file) return;
     App.showLoading();
-    
-    // Helpers for product matching and multiplier logic
-    const extractMultiplier = (text) => {
-      if (!text) return 1;
-      const lower = text.toLowerCase();
-      const pcsMatch = lower.match(/\b(\d+)\s*(?:pcs|pc|botol|pack|box)\b/) || lower.match(/\bx\s*(\d+)\b/);
-      if (pcsMatch) {
-        return Number(pcsMatch[1]) || 1;
-      }
-      if (lower.includes('triple')) return 3;
-      if (lower.includes('twin') || lower.includes('double')) return 2;
-      return 1;
+
+    const CUTOVER = '2026-06-25'; // orders on/after this date deduct stock; before it = revenue/qty only
+
+    // Pack size from "Nama Variasi" (Q): Single/blank=1, Twin=2, Triple=3, else parse "(N pcs)".
+    const packSizeFromVariation = (variation) => {
+      const v = String(variation || '').toLowerCase();
+      const m = v.match(/(\d+)\s*pcs/);
+      if (m) return Number(m[1]) || 1;
+      if (v.indexOf('triple') !== -1) return 3;
+      if (v.indexOf('twin') !== -1 || v.indexOf('double') !== -1) return 2;
+      return 1; // single / blank / unknown
     };
+
+    // Resolve a row to master targets [{sku, units}].
+    // 1) by SKU Induk map  2) name-keyword fallback (resilient to new listings).
+    const resolveTargets = (skuInduk, rawName) => {
+      const raw = String(skuInduk || '').trim();
+      const stripped = raw.replace(/^0+(?=\d)/, '');
+      const map = this.ECOMMERCE_SKU_MAP;
+      const direct = map[raw] || map[stripped] || map['0' + stripped] || map['00' + stripped];
+      if (direct) return direct;
+      const n = String(rawName || '').toLowerCase();
+      if (n.indexOf('sunscreen') !== -1 || n.indexOf('uv shield') !== -1 || n.indexOf('spf') !== -1) return [{ sku: 'SM-UVS-025', units: 1 }];
+      if (n.indexOf('cleansing toner') !== -1 || (n.indexOf('toner') !== -1 && n.indexOf('niacinamide') !== -1)) return [{ sku: 'SM-CT-100', units: 1 }];
+      if (n.indexOf('cleanser') !== -1 || n.indexOf('oil control') !== -1 || (n.indexOf('sabun') !== -1 && n.indexOf('salicylic') !== -1)) return [{ sku: 'SM-OCC-100', units: 1 }];
+      return null; // unmapped (e.g. cotton pads) -> ignore
+    };
+
+    // Route to warehouse by "Opsi Pengiriman" (G).
+    const routeWarehouse = (carrier) => {
+      const c = String(carrier || '').toLowerCase();
+      if (c.indexOf('same day') !== -1 || c.indexOf('gosend') !== -1 || c.indexOf('grabexpress') !== -1 || c.indexOf('instant') !== -1) {
+        return 'Clinic (Express)';
+      }
+      return 'Online Warehouse';
+    };
+
+    // Indonesian currency uses '.' as thousands separator -> strip non-digits.
+    const idrToNumber = (val) => Number(String(val == null ? '' : val).replace(/[^0-9]/g, '')) || 0;
 
     const matchProduct = (rawName, masterData) => {
       const lowerName = rawName.toLowerCase();
@@ -379,14 +425,14 @@ const Inventory = {
     // Create a deep copy of summary to simulate FIFO for the preview without touching real stock yet
     const localSummary = JSON.parse(JSON.stringify(this.summary));
     
-    const assignBatchFIFOLocal = (sku, qtyNeeded) => {
+    const assignBatchFIFOLocal = (sku, qtyNeeded, warehouse) => {
       const batches = localSummary
-        .filter(s => s.SKU === sku && s.Warehouse_Type === 'Online Warehouse' && s.Qty > 0)
+        .filter(s => s.SKU === sku && s.Warehouse_Type === warehouse && s.Qty > 0)
         .sort((a, b) => {
           if (a.Expiry_Date && b.Expiry_Date) return new Date(a.Expiry_Date) - new Date(b.Expiry_Date);
           if (a.Expiry_Date) return -1;
           if (b.Expiry_Date) return 1;
-          return a.Batch_Number.localeCompare(b.Batch_Number);
+          return String(a.Batch_Number).localeCompare(String(b.Batch_Number));
         });
 
       const assignments = [];
@@ -400,7 +446,7 @@ const Inventory = {
       }
 
       if (remaining > 0) {
-        assignments.push({ batch: 'ONLINE-AUTO', qty: remaining });
+        assignments.push({ batch: warehouse === 'Clinic (Express)' ? 'CLINIC-AUTO' : 'ONLINE-AUTO', qty: remaining });
       }
 
       return assignments;
@@ -432,126 +478,106 @@ const Inventory = {
         // Sort master products by length descending so more specific names take priority
         const sortedMaster = [...AppState.masterData].sort((a, b) => b.Product_Name.length - a.Product_Name.length);
         
-        for (const row of rawJson) {
-          // Status check: whitelist successful/completed/shipped orders
-          const status = String(row['Status Pesanan'] || row['Order Status'] || '').toLowerCase().trim();
-          const allowedStatuses = ['selesai', 'completed', 'dikirim', 'shipped'];
-          const isAllowed = allowedStatuses.some(s => status.includes(s));
-          if (!isAllowed) {
-            continue; // Skip cancelled/unpaid/pending/other orders
-          }
-          
-          // Rely on Product Name matching against Master Product Data instead of SKU
-          const rawName = String(row['Nama Produk'] || row['Product Name'] || row['Nama Variasi'] || '').trim();
-          if (!rawName) continue;
-          
-          const matchedProduct = matchProduct(rawName, sortedMaster);
-          if (!matchedProduct) {
-            continue; // Skip items that don't match any Master Product
-          }
-          
-          const refId = String(row['No. Pesanan'] || row['Order ID'] || '').trim();
-          
-          // Check for duplicate imports against current database
-          if (refId) {
-            const isAlreadyInDB = this.outData && this.outData.some(existing => String(existing.Reference_ID).trim() === refId);
-            if (isAlreadyInDB) {
-              skippedDuplicates++;
-              continue; // Skip duplicate order
-            }
-          }
-          
-          const sku = matchedProduct.SKU;
-          const productName = matchedProduct.Product_Name;
+        // Dedupe across re-uploads: every processed line is recorded in
+        // Ecommerce_Sales as `${Order_ID}|${SKU}`. Skip lines already there
+        // (covers pre-cutover revenue-only rows too) and in-file repeats.
+        let existingKeys = new Set();
+        try {
+          const idsRes = await API.call('getEcommerceOrderIds');
+          if (idsRes && idsRes.success && Array.isArray(idsRes.data)) existingKeys = new Set(idsRes.data);
+        } catch (e) {}
+        const seenKeys = new Set();
 
+        for (const row of rawJson) {
+          // Skip cancelled orders only ("Batal"); everything else is a real sale.
+          const status = String(row['Status Pesanan'] || row['Order Status'] || '').toLowerCase().trim();
+          if (status.indexOf('batal') !== -1 || status.indexOf('cancel') !== -1) continue;
+
+          const rawName = String(row['Nama Produk'] || row['Product Name'] || '').trim();
+          const skuInduk = String(row['SKU Induk'] || row['Nomor Referensi SKU'] || '').trim();
+          const targets = resolveTargets(skuInduk, rawName);
+          if (!targets) continue; // unmapped listing (e.g. Cotton Pads) -> ignore
+
+          const refId = String(row['No. Pesanan'] || row['Order ID'] || '').trim();
           const variasi = String(row['Nama Variasi'] || row['Variation Name'] || '').trim();
-          const prodMultiplier = extractMultiplier(rawName);
-          const varMultiplier = extractMultiplier(variasi);
-          const multiplier = varMultiplier > 1 ? varMultiplier : prodMultiplier;
-          
-          const rawQty = Number(row['Jumlah'] || row['Quantity'] || 1) || 1;
-          const totalQty = rawQty * multiplier;
-          
+          const packSize = packSizeFromVariation(variasi);
+          const jumlah = Number(row['Jumlah'] || row['Quantity'] || 1) || 1;
+
           let dateStr = String(row['Waktu Pesanan Dibuat'] || row['Order Creation Date'] || '').trim();
           if (dateStr.length >= 10) dateStr = dateStr.substring(0, 10);
           else dateStr = App.todayStr();
-
           if (!minDate || dateStr < minDate) minDate = dateStr;
           if (!maxDate || dateStr > maxDate) maxDate = dateStr;
 
-          // Track recap aggregation
-          if (!recapMap[sku]) {
-            recapMap[sku] = {
+          // Net revenue = Harga Setelah Diskon (S) − Voucher Ditanggung Penjual (AC)
+          const priceAfterDisc = idrToNumber(row['Harga Setelah Diskon'] || row['Harga Awal'] || 0);
+          const voucherSeller = idrToNumber(row['Voucher Ditanggung Penjual'] || 0);
+          const netRevenue = Math.max(0, priceAfterDisc - voucherSeller);
+
+          const carrier = String(row['Opsi Pengiriman'] || row['Courier'] || row['Jasa Kirim'] || '').trim();
+          const warehouse = routeWarehouse(carrier);
+          const statusLabel = row['Status Pesanan'] || row['Order Status'] || 'Selesai';
+
+          // Channel detection
+          let channel = 'Shopee';
+          const firstKeyStr = JSON.stringify(Object.keys(row)).toLowerCase();
+          if (firstKeyStr.includes('tokopedia')) channel = 'Tokopedia';
+          else if (firstKeyStr.includes('tiktok')) channel = 'TikTok Shop';
+
+          // A listing may expand to multiple master SKUs (bundle). Attribute the
+          // line's net revenue to the FIRST target only (no double-count);
+          // quantities apply to each component.
+          targets.forEach((t, ti) => {
+            const sku = t.sku;
+            const product = AppState.masterData.find(m => m.SKU === sku);
+            const productName = product ? product.Product_Name : sku;
+            const qtyPcs = jumlah * packSize * (t.units || 1);
+            const lineNet = ti === 0 ? netRevenue : 0;
+
+            const dedupeKey = `${refId}|${sku}`;
+            if (refId && (existingKeys.has(dedupeKey) || seenKeys.has(dedupeKey))) { skippedDuplicates++; return; }
+            if (refId) seenKeys.add(dedupeKey);
+
+            if (!recapMap[sku]) recapMap[sku] = { SKU: sku, Product_Name: productName, totalQty: 0, totalValue: 0 };
+            recapMap[sku].totalQty += qtyPcs;
+            recapMap[sku].totalValue += lineNet;
+
+            rawSales.push({
+              Order_ID: refId,
+              Date: dateStr,
+              Channel: channel,
               SKU: sku,
               Product_Name: productName,
-              totalQty: 0,
-              totalValue: 0
-            };
-          }
-          recapMap[sku].totalQty += totalQty;
-          
-          // Extract Net Value
-          const valStr = String(row['Total Harga Produk'] || row['Total Pembayaran'] || '0').replace(/\./g, '');
-          const netVal = Number(valStr.replace(/[^0-9]/g, '')) || 0;
-          recapMap[sku].totalValue += netVal;
+              Variation_Name: variasi,
+              Quantity: qtyPcs,
+              Raw_Quantity: jumlah,
+              Price: priceAfterDisc,
+              Total_Price: lineNet,
+              Status: statusLabel,
+              Shipping_Carrier: carrier,
+              Net_Revenue: lineNet,
+              Warehouse_Type: warehouse
+            });
 
-          // Detect Channel
-          let channel = 'Online';
-          const keys = Object.keys(row);
-          const firstKeyStr = JSON.stringify(keys).toLowerCase();
-          if (firstKeyStr.includes('shopee')) {
-            channel = 'Shopee';
-          } else if (firstKeyStr.includes('tokopedia')) {
-            channel = 'Tokopedia';
-          } else if (firstKeyStr.includes('tiktok')) {
-            channel = 'TikTok Shop';
-          } else if (row['No. Pesanan'] && String(row['No. Pesanan']).startsWith('2')) {
-            channel = 'Shopee';
-          } else if (row['Nomor Invoice'] || String(row['Order ID'] || '').startsWith('INV')) {
-            channel = 'Tokopedia';
-          }
-
-          // Extract Price
-          const rawPrice = String(row['Harga Awal'] || row['Harga Setelah Diskon'] || row['Original Price'] || '0').replace(/\./g, '');
-          const unitPrice = Number(rawPrice.replace(/[^0-9]/g, '')) || 0;
-          const carrier = String(row['Opsi Pengiriman'] || row['Courier'] || row['Jasa Kirim'] || '').trim();
-
-          // Push raw sales detail
-          rawSales.push({
-            Order_ID: refId,
-            Date: dateStr,
-            Channel: channel,
-            SKU: sku,
-            Product_Name: productName,
-            Variation_Name: variasi,
-            Quantity: totalQty,
-            Raw_Quantity: rawQty,
-            Price: unitPrice,
-            Total_Price: netVal,
-            Status: row['Status Pesanan'] || row['Order Status'] || 'Completed',
-            Shipping_Carrier: carrier
-          });
-
-          // Only deduct from inventory if date is starting 24 June 2026
-          if (dateStr >= '2026-06-24') {
-            // Apply FIFO logic using local summary
-            const batchAssignments = assignBatchFIFOLocal(sku, totalQty);
-            
-            for (const ba of batchAssignments) {
-              outRows.push({
-                SKU: sku,
-                Quantity: ba.qty,
-                Date: dateStr,
-                Reason: 'Online Sales',
-                Reference_ID: refId,
-                Batch_Number: ba.batch,
-                Warehouse_Type: 'Online Warehouse'
-              });
-              // Decrement local summary so next row sees updated stock
-              const summaryRow = localSummary.find(s => s.SKU === sku && s.Warehouse_Type === 'Online Warehouse' && s.Batch_Number === ba.batch);
-              if (summaryRow) summaryRow.Qty -= ba.qty;
+            // Deduct stock only for orders on/after the cutover date.
+            if (dateStr >= CUTOVER) {
+              const reason = warehouse === 'Clinic (Express)' ? 'Clinic Sales' : 'Online Sales';
+              const batchAssignments = assignBatchFIFOLocal(sku, qtyPcs, warehouse);
+              for (const ba of batchAssignments) {
+                outRows.push({
+                  SKU: sku,
+                  Quantity: ba.qty,
+                  Date: dateStr,
+                  Reason: reason,
+                  Reference_ID: refId,
+                  Batch_Number: ba.batch,
+                  Warehouse_Type: warehouse
+                });
+                const summaryRow = localSummary.find(s => s.SKU === sku && s.Warehouse_Type === warehouse && s.Batch_Number === ba.batch);
+                if (summaryRow) summaryRow.Qty -= ba.qty;
+              }
             }
-          }
+          });
         }
 
         const recapItems = Object.values(recapMap);
