@@ -290,7 +290,7 @@ const Expenses = {
   showAddForm() {
     const today = App.todayStr();
     const categories = [
-      'Marketing', 'Operational', 'Investment', 'Other',
+      'Marketing', 'Operational', 'Investment', 'Dividend', 'Other',
       'Packaging', 'Logistics', 'Office Supplies', 'Utilities', 'Salary', 'Production', 'Travel', 'Maintenance', 'Software'
     ];
 

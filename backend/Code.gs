@@ -31,6 +31,17 @@ const WAREHOUSES = {
 // recorded for revenue/qty analytics only (no stock movement). Inclusive.
 const ECOMMERCE_STOCK_CUTOVER = '2026-06-25';
 
+// Categories excluded from the dashboard expense figure + cashflow. These are
+// capital movements (owner give-backs / dividends / investments), not operating
+// expenses. Matched as case-insensitive substrings, so free-text categories
+// like "Investment Give Back 300 Jt Devin (80%)" are caught. Edit this list to
+// tune what counts as a real operating expense on the dashboard.
+const DASHBOARD_EXPENSE_EXCLUSIONS = ['investment', 'dividend', 'give back', 'giveback'];
+function isExcludedFromDashboardExpenses(category) {
+  const c = String(category || '').toLowerCase();
+  return DASHBOARD_EXPENSE_EXCLUSIONS.some(k => c.indexOf(k) !== -1);
+}
+
 // ============================================================
 // ROUTING – supports both GET (?payload=) and POST
 // ============================================================
@@ -961,7 +972,7 @@ function getDashboardData(options) {
   const expenseBreakdownMap = {};
   expensesData.forEach(e => {
     const category = String(e.Category || '').trim();
-    if (category.toLowerCase() === 'investment') return;
+    if (isExcludedFromDashboardExpenses(category)) return;
     const eDate = e.Date ? formatDate(e.Date) : '';
     if (dateFrom && eDate < dateFrom) return;
     if (dateTo && eDate > dateTo) return;
@@ -1054,7 +1065,7 @@ function computeCashflowSeries(args) {
 
   // Expense: exclude Investment
   expensesData.forEach(e => {
-    if (String(e.Category || '').trim().toLowerCase() === 'investment') return;
+    if (isExcludedFromDashboardExpenses(e.Category)) return;
     addExpense(e.Date, Number(e.Amount) || 0);
   });
 
