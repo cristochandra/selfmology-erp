@@ -75,6 +75,7 @@ function handleRequest(e) {
       case 'addInventoryOut':     result = addInventoryOut(data); break;
       case 'bulkAddInventoryOut': result = bulkAddInventoryOut(data); break;
       case 'getEcommerceOrderIds': result = getEcommerceOrderIds(); break;
+      case 'getEcommerceReconciliation': result = getEcommerceReconciliation(); break;
       case 'getOfflineIncome':       result = getOfflineIncome(); break;
       case 'bulkAddOfflineIncome':   result = bulkAddOfflineIncome(data); break;
       case 'resetOnlineTransactions': result = resetOnlineTransactions(); break;
@@ -347,10 +348,91 @@ function moveStock(data) {
 
 // Returns existing `${Order_ID}|${SKU}` keys so the CSV importer can skip
 // already-imported lines (works for pre-cutover revenue-only rows too).
+// Returns the sync state the CSV importer needs to avoid double-counting AND to
+// repair orders whose sale was recorded but stock never deducted (TK-002).
+//   data          -> Ecommerce_Sales keys `${Order_ID}|${SKU}` (a sale exists)
+//   deductionKeys -> Inventory_Out keys `${Reference_ID}|${SKU}` for online/clinic
+//                    sales (a stock deduction exists)
+// The importer skips a line's SALE only when its key is in `data`, but still
+// deducts stock when the key is missing from `deductionKeys`, so a re-upload of
+// the full month closes any gap without re-deducting already-handled orders.
 function getEcommerceOrderIds() {
   const sales = getSheetData(SHEETS.ECOMMERCE_SALES) || [];
-  const ids = sales.map(s => `${String(s.Order_ID || '').trim()}|${String(s.SKU || '').trim()}`);
-  return { success: true, data: ids };
+  const data = sales.map(s => `${String(s.Order_ID || '').trim()}|${String(s.SKU || '').trim()}`);
+
+  const out = getSheetData(SHEETS.INVENTORY_OUT) || [];
+  const ECOM_REASONS = ['online sales', 'clinic sales'];
+  const deductionKeys = out
+    .filter(r => ECOM_REASONS.indexOf(String(r.Reason || '').toLowerCase().trim()) !== -1)
+    .map(r => `${String(r.Reference_ID || '').trim()}|${String(r.SKU || '').trim()}`)
+    .filter(k => k !== '|');
+
+  return { success: true, data: data, deductionKeys: deductionKeys };
+}
+
+// Reconciliation for TK-002: proves, per SKU, that every post-cutover online
+// sale has a matching stock deduction, and lists each import batch with the
+// order-date window it covered so gaps in coverage are visible.
+function getEcommerceReconciliation() {
+  const sales = getSheetData(SHEETS.ECOMMERCE_SALES) || [];
+  const out = getSheetData(SHEETS.INVENTORY_OUT) || [];
+  const master = getSheetData(SHEETS.MASTER_DATA) || [];
+  const nameBySku = {};
+  master.forEach(m => { nameBySku[String(m.SKU || '').trim()] = m.Product_Name || m.SKU; });
+
+  // Per-SKU: sold (post-cutover) vs deducted (online/clinic ledger).
+  const ECOM_REASONS = ['online sales', 'clinic sales'];
+  const bySku = {};
+  const bump = (sku, field, qty) => {
+    const k = String(sku || '').trim();
+    if (!k) return;
+    if (!bySku[k]) bySku[k] = { SKU: k, Product_Name: nameBySku[k] || k, sold: 0, deducted: 0 };
+    bySku[k][field] += qty;
+  };
+  sales.forEach(s => {
+    if (String(s.Date || '') >= ECOMMERCE_STOCK_CUTOVER) bump(s.SKU, 'sold', Number(s.Quantity) || 0);
+  });
+  out.forEach(r => {
+    if (ECOM_REASONS.indexOf(String(r.Reason || '').toLowerCase().trim()) !== -1) bump(r.SKU, 'deducted', Number(r.Quantity) || 0);
+  });
+  const perSku = Object.values(bySku)
+    .map(x => ({ ...x, diff: x.sold - x.deducted }))
+    .sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff) || String(a.SKU).localeCompare(String(b.SKU)));
+
+  // Import batches grouped by Import_Date: order/line/pcs/revenue + order-date window.
+  const batches = {};
+  // Coverage grouped by ORDER month (YYYY-MM): answers "did I capture the month".
+  const months = {};
+  sales.forEach(s => {
+    const imp = String(s.Import_Date || 'Unknown').trim() || 'Unknown';
+    if (!batches[imp]) batches[imp] = { Import_Date: imp, orders: {}, lines: 0, pcs: 0, revenue: 0, minDate: null, maxDate: null };
+    const b = batches[imp];
+    const oid = String(s.Order_ID || '').trim();
+    const qty = Number(s.Quantity) || 0;
+    const rev = Number(s.Net_Revenue) || 0;
+    b.orders[oid] = true;
+    b.lines += 1;
+    b.pcs += qty;
+    b.revenue += rev;
+    const d = String(s.Date || '');
+    if (d) {
+      if (!b.minDate || d < b.minDate) b.minDate = d;
+      if (!b.maxDate || d > b.maxDate) b.maxDate = d;
+    }
+    const mo = d.length >= 7 ? d.substring(0, 7) : 'Unknown';
+    if (!months[mo]) months[mo] = { month: mo, orders: {}, pcs: 0, revenue: 0 };
+    months[mo].orders[oid] = true;
+    months[mo].pcs += qty;
+    months[mo].revenue += rev;
+  });
+  const imports = Object.values(batches)
+    .map(b => ({ Import_Date: b.Import_Date, orderCount: Object.keys(b.orders).length, lineCount: b.lines, pcs: b.pcs, revenue: b.revenue, minDate: b.minDate, maxDate: b.maxDate }))
+    .sort((a, b) => String(b.Import_Date).localeCompare(String(a.Import_Date)));
+  const byMonth = Object.values(months)
+    .map(m => ({ month: m.month, orderCount: Object.keys(m.orders).length, pcs: m.pcs, revenue: m.revenue }))
+    .sort((a, b) => String(b.month).localeCompare(String(a.month)));
+
+  return { success: true, perSku: perSku, imports: imports, byMonth: byMonth, cutover: ECOMMERCE_STOCK_CUTOVER };
 }
 
 // ============================================================

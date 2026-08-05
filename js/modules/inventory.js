@@ -23,6 +23,7 @@ const Inventory = {
     this.renderSummary();
     this.bindForms();
     this.bindCSV();
+    this.renderReconciliation();
 
     const today = App.todayStr();
     document.getElementById('si-date').value = today;
@@ -478,15 +479,26 @@ const Inventory = {
         // Sort master products by length descending so more specific names take priority
         const sortedMaster = [...AppState.masterData].sort((a, b) => b.Product_Name.length - a.Product_Name.length);
         
-        // Dedupe across re-uploads: every processed line is recorded in
-        // Ecommerce_Sales as `${Order_ID}|${SKU}`. Skip lines already there
-        // (covers pre-cutover revenue-only rows too) and in-file repeats.
-        let existingKeys = new Set();
+        // Dedupe across re-uploads, keyed by `${Order_ID}|${SKU}`:
+        //   salesKeys     -> a sale already recorded in Ecommerce_Sales
+        //   deductionKeys -> stock already deducted in Inventory_Out (online/clinic)
+        // A line's SALE is skipped only when its key is in salesKeys, but its
+        // stock is still DEDUCTED when the key is missing from deductionKeys.
+        // This lets a full-month re-upload close gaps (orders whose sale was
+        // recorded but stock never deducted — TK-002) without ever
+        // double-counting an order that was already fully handled.
+        let salesKeys = new Set();
+        let deductionKeys = new Set();
         try {
           const idsRes = await API.call('getEcommerceOrderIds');
-          if (idsRes && idsRes.success && Array.isArray(idsRes.data)) existingKeys = new Set(idsRes.data);
+          if (idsRes && idsRes.success) {
+            if (Array.isArray(idsRes.data)) salesKeys = new Set(idsRes.data);
+            if (Array.isArray(idsRes.deductionKeys)) deductionKeys = new Set(idsRes.deductionKeys);
+          }
         } catch (e) {}
-        const seenKeys = new Set();
+        const seenSales = new Set();
+        const seenDeduct = new Set();
+        let newSalesLines = 0, newDeductionLines = 0, repairedDeductionLines = 0;
 
         for (const row of rawJson) {
           // Skip cancelled orders only ("Batal"); everything else is a real sale.
@@ -535,32 +547,46 @@ const Inventory = {
             const lineNet = ti === 0 ? netRevenue : 0;
 
             const dedupeKey = `${refId}|${sku}`;
-            if (refId && (existingKeys.has(dedupeKey) || seenKeys.has(dedupeKey))) { skippedDuplicates++; return; }
-            if (refId) seenKeys.add(dedupeKey);
+            const soldAlready = refId && (salesKeys.has(dedupeKey) || seenSales.has(dedupeKey));
+            const deductedAlready = refId && (deductionKeys.has(dedupeKey) || seenDeduct.has(dedupeKey));
+            const eligibleForStock = dateStr >= CUTOVER;
 
-            if (!recapMap[sku]) recapMap[sku] = { SKU: sku, Product_Name: productName, totalQty: 0, totalValue: 0 };
-            recapMap[sku].totalQty += qtyPcs;
-            recapMap[sku].totalValue += lineNet;
+            // Fully handled already (sale recorded AND — if post-cutover — stock
+            // deducted): skip entirely so a full-month re-upload never double-counts.
+            if (soldAlready && (!eligibleForStock || deductedAlready)) { skippedDuplicates++; return; }
 
-            rawSales.push({
-              Order_ID: refId,
-              Date: dateStr,
-              Channel: channel,
-              SKU: sku,
-              Product_Name: productName,
-              Variation_Name: variasi,
-              Quantity: qtyPcs,
-              Raw_Quantity: jumlah,
-              Price: priceAfterDisc,
-              Total_Price: lineNet,
-              Status: statusLabel,
-              Shipping_Carrier: carrier,
-              Net_Revenue: lineNet,
-              Warehouse_Type: warehouse
-            });
+            // 1) Record the SALE only if it isn't in Ecommerce_Sales yet.
+            if (!soldAlready) {
+              if (refId) seenSales.add(dedupeKey);
+              newSalesLines++;
+              if (!recapMap[sku]) recapMap[sku] = { SKU: sku, Product_Name: productName, totalQty: 0, totalValue: 0 };
+              recapMap[sku].totalQty += qtyPcs;
+              recapMap[sku].totalValue += lineNet;
 
-            // Deduct stock only for orders on/after the cutover date.
-            if (dateStr >= CUTOVER) {
+              rawSales.push({
+                Order_ID: refId,
+                Date: dateStr,
+                Channel: channel,
+                SKU: sku,
+                Product_Name: productName,
+                Variation_Name: variasi,
+                Quantity: qtyPcs,
+                Raw_Quantity: jumlah,
+                Price: priceAfterDisc,
+                Total_Price: lineNet,
+                Status: statusLabel,
+                Shipping_Carrier: carrier,
+                Net_Revenue: lineNet,
+                Warehouse_Type: warehouse
+              });
+            }
+
+            // 2) Deduct stock for post-cutover orders that haven't been deducted
+            // yet. Runs even when the sale was already recorded, repairing the
+            // "stock out not recorded" gap (TK-002).
+            if (eligibleForStock && !deductedAlready) {
+              if (refId) seenDeduct.add(dedupeKey);
+              if (soldAlready) repairedDeductionLines++; else newDeductionLines++;
               const reason = warehouse === 'Clinic (Express)' ? 'Clinic Sales' : 'Online Sales';
               const batchAssignments = assignBatchFIFOLocal(sku, qtyPcs, warehouse);
               for (const ba of batchAssignments) {
@@ -582,11 +608,12 @@ const Inventory = {
 
         const recapItems = Object.values(recapMap);
 
-        if (recapItems.length === 0) {
+        // Nothing new to record AND nothing to repair -> file already fully imported.
+        if (recapItems.length === 0 && outRows.length === 0) {
           App.hideLoading();
-          let msg = "No valid completed sales items matching Master Products found.";
+          let msg = "No new sales or deductions found — this file is already fully imported.";
           if (skippedDuplicates > 0) {
-            msg += ` (${skippedDuplicates} duplicate rows were skipped)`;
+            msg = `Everything in this file was already imported (${skippedDuplicates} lines skipped). Nothing to do.`;
           }
           App.toast(msg, "info");
           document.getElementById('csv-file-input').value = '';
@@ -607,13 +634,39 @@ const Inventory = {
           if (skippedDuplicates > 0) {
             duplicateWarning = `
               <div style="background: var(--color-orange-light); border-left: 4px solid var(--color-orange); padding: 12px 16px; border-radius: 6px; margin-bottom: 16px; font-size: 12px; color: var(--color-orange); line-height: 1.5; font-weight: 500;">
-                ⚠️ <strong>Duplicate Prevention:</strong> ${skippedDuplicates} transaction lines in this file were skipped because they have already been imported previously.
+                ⚠️ <strong>Duplicate Prevention:</strong> ${skippedDuplicates} order lines already fully imported were skipped (no double-count).
               </div>
             `;
           }
 
+          // Highlight recovered deductions: orders whose sale was previously
+          // recorded but whose stock was never deducted, now being repaired.
+          let repairNotice = '';
+          if (repairedDeductionLines > 0) {
+            repairNotice = `
+              <div style="background: var(--color-blue-light, #e8f1ff); border-left: 4px solid var(--color-blue, #2563eb); padding: 12px 16px; border-radius: 6px; margin-bottom: 16px; font-size: 12px; color: var(--color-blue, #2563eb); line-height: 1.5; font-weight: 500;">
+                🔧 <strong>Gap Repair:</strong> ${repairedDeductionLines} order line(s) were sold earlier but never had stock deducted. Their stock will now be deducted (sale not re-counted).
+              </div>
+            `;
+          }
+
+          const chip = (label, val, color) => `
+            <div style="flex:1; min-width:96px; background:var(--bg-secondary); border-radius:8px; padding:10px 12px; text-align:center;">
+              <div style="font-size:18px; font-weight:800; color:${color};">${val}</div>
+              <div style="font-size:10px; color:var(--text-tertiary); text-transform:uppercase; font-weight:600; margin-top:2px;">${label}</div>
+            </div>`;
+          const breakdown = `
+            <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px;">
+              ${chip('New Sales', newSalesLines, 'var(--color-primary)')}
+              ${chip('New Deductions', newDeductionLines, 'var(--color-green, #16a34a)')}
+              ${chip('Gap Repairs', repairedDeductionLines, 'var(--color-blue, #2563eb)')}
+              ${chip('Skipped (dup)', skippedDuplicates, 'var(--text-tertiary)')}
+            </div>`;
+
           previewEl.innerHTML = `
             ${duplicateWarning}
+            ${repairNotice}
+            ${breakdown}
             <div style="background:var(--bg-secondary); padding:12px 16px; border-radius:8px; margin-bottom:16px; display:flex; justify-content:space-between; align-items:center;">
               <div>
                 <div style="font-size:11px; color:var(--text-tertiary); text-transform:uppercase; font-weight:600;">Date Range</div>
@@ -624,8 +677,8 @@ const Inventory = {
                 <div style="font-weight:700; font-size:13px;">${recapItems.length} Products</div>
               </div>
             </div>
-            <div style="font-weight:700; margin-bottom:8px; font-size:13px;">Sales Summary Recap</div>
-            <div class="table-responsive" style="max-height:320px; overflow-y:auto;">
+            <div style="font-weight:700; margin-bottom:8px; font-size:13px;">${recapItems.length > 0 ? 'Sales Summary Recap' : 'No new sales — stock-gap repair only'}</div>
+            <div class="table-responsive ${recapItems.length > 0 ? '' : 'hidden'}" style="max-height:320px; overflow-y:auto;">
               <table class="data-table" style="font-size:12px;">
                 <thead>
                   <tr>
@@ -663,8 +716,10 @@ const Inventory = {
           importBtn.classList.remove('hidden');
           const totalPcsDeducted = outRows.reduce((sum, r) => sum + r.Quantity, 0);
           const totalPcsSold = recapItems.reduce((sum, r) => sum + r.totalQty, 0);
-          if (totalPcsDeducted > 0) {
-            importBtn.innerHTML = `Execute Deduction (Deduct: ${totalPcsDeducted} Pcs, Total Sales: ${totalPcsSold} Pcs)`;
+          if (totalPcsSold > 0 && totalPcsDeducted > 0) {
+            importBtn.innerHTML = `Execute (Deduct: ${totalPcsDeducted} Pcs, New Sales: ${totalPcsSold} Pcs)`;
+          } else if (totalPcsDeducted > 0) {
+            importBtn.innerHTML = `Repair Stock Deductions (${totalPcsDeducted} Pcs)`;
           } else {
             importBtn.innerHTML = `Record Sales Only (Total Sales: ${totalPcsSold} Pcs)`;
           }
@@ -705,6 +760,7 @@ const Inventory = {
         document.getElementById('csv-import-btn').classList.add('hidden');
         
         this.load();
+        this.renderReconciliation(true);
         // Reload dashboard to update charts
         if (typeof Dashboard !== 'undefined' && AppState.currentPage === 'dashboard') Dashboard.load();
       } else {
@@ -739,5 +795,159 @@ const Inventory = {
       },
       'danger'
     );
+  },
+
+  // TK-002: Reconciliation & Import Log. Proves every post-cutover online sale
+  // has a matching stock deduction, and lists each import batch with the
+  // order-date window it covered so coverage gaps are visible.
+  async renderReconciliation(force) {
+    const el = document.getElementById('ecom-reconciliation');
+    if (!el) return;
+    if (force) el.innerHTML = '<p class="text-sm text-secondary">Refreshing…</p>';
+
+    let res;
+    try {
+      res = await API.call('getEcommerceReconciliation');
+    } catch (e) {
+      el.innerHTML = '<p class="text-sm" style="color:var(--color-red);">Could not load reconciliation (network error).</p>';
+      return;
+    }
+    if (!res || !res.success) {
+      el.innerHTML = '<p class="text-sm" style="color:var(--color-red);">Reconciliation unavailable. Redeploy the backend to enable it.</p>';
+      return;
+    }
+
+    const perSku = res.perSku || [];
+    const imports = res.imports || [];
+    const byMonth = res.byMonth || [];
+    const mismatches = perSku.filter(r => r.diff !== 0);
+    const money = (n) => (typeof App.formatCurrency === 'function') ? App.formatCurrency(n || 0) : ('Rp ' + (Number(n) || 0).toLocaleString('id-ID'));
+
+    // ---- Section 1: balance banner + per-SKU sold vs deducted ----
+    const statusBanner = mismatches.length === 0
+      ? `<div style="background:var(--color-green-light,#e7f7ec); border-left:4px solid var(--color-green,#16a34a); padding:12px 16px; border-radius:6px; margin-bottom:20px; font-size:12px; color:var(--color-green,#16a34a); font-weight:600;">
+           ✅ In balance — every online sale on/after ${res.cutover} has its stock deducted. No missing deductions.
+         </div>`
+      : `<div style="background:var(--color-red-light,#fdeaea); border-left:4px solid var(--color-red,#dc2626); padding:12px 16px; border-radius:6px; margin-bottom:20px; font-size:12px; color:var(--color-red,#dc2626); font-weight:600;">
+           ⚠️ ${mismatches.length} product(s) don't balance — sold ≠ deducted. Re-upload the full-month file to auto-repair.
+         </div>`;
+
+    const skuRows = perSku.map(r => {
+      const ok = r.diff === 0;
+      const color = ok ? 'var(--color-green,#16a34a)' : 'var(--color-red,#dc2626)';
+      const label = ok ? '✓ Balanced' : (r.diff > 0 ? `${r.diff} pcs not deducted` : `${-r.diff} pcs over-deducted`);
+      return `<tr>
+        <td><div style="font-weight:600;">${r.Product_Name}</div><div style="font-size:10px; color:var(--text-tertiary);">${r.SKU}</div></td>
+        <td style="text-align:center;">${r.sold}</td>
+        <td style="text-align:center;">${r.deducted}</td>
+        <td style="text-align:right; font-weight:700; color:${color};">${label}</td>
+      </tr>`;
+    }).join('');
+
+    // ---- Section 2: coverage by order month (did I capture the whole month?) ----
+    const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const monthLabel = (mo) => {
+      const m = /^(\d{4})-(\d{2})$/.exec(mo || '');
+      return m ? `${MONTHS[Number(m[2]) - 1]} ${m[1]}` : (mo || 'Unknown');
+    };
+    // Fill interior month gaps (e.g. a month with zero recorded orders between
+    // two months that have data) so a forgotten upload is visible, not invisible.
+    const monthIdx = (mo) => { const m = /^(\d{4})-(\d{2})$/.exec(mo || ''); return m ? Number(m[1]) * 12 + (Number(m[2]) - 1) : null; };
+    const idxToMonth = (i) => `${Math.floor(i / 12)}-${String((i % 12) + 1).padStart(2, '0')}`;
+    let monthRows = byMonth.slice();
+    const realIdx = byMonth.map(m => monthIdx(m.month)).filter(i => i !== null);
+    if (realIdx.length > 1) {
+      const hi = Math.max(...realIdx), lo = Math.min(...realIdx);
+      const present = new Set(realIdx);
+      const filled = [];
+      for (let i = hi; i >= lo; i--) {
+        const found = byMonth.find(m => monthIdx(m.month) === i);
+        if (found) filled.push(found);
+        else if (!present.has(i)) filled.push({ month: idxToMonth(i), orderCount: 0, pcs: 0, revenue: 0, _gap: true });
+      }
+      monthRows = filled;
+    }
+    const monthSection = byMonth.length === 0 ? '' : `
+      <div style="font-weight:700; margin:4px 0 4px; font-size:13px;">Coverage by order month</div>
+      <p class="text-xs text-secondary" style="margin-bottom:8px;">How many completed orders are recorded for each month. A highlighted row = zero orders recorded; re-upload that month's export to be sure you didn't miss it (duplicates are skipped automatically).</p>
+      <div class="table-responsive" style="margin-bottom:24px;">
+        <table class="data-table" style="font-size:12px;">
+          <thead><tr>
+            <th>Month</th>
+            <th style="text-align:center;">Orders</th>
+            <th style="text-align:center;">Pcs</th>
+            <th style="text-align:right;">Est. Net Revenue</th>
+          </tr></thead>
+          <tbody>${monthRows.map(m => m._gap ? `
+            <tr style="background:var(--color-orange-light,#fff4e5);">
+              <td style="font-weight:600; color:var(--color-orange,#d97706);">${monthLabel(m.month)}</td>
+              <td colspan="3" style="text-align:center; color:var(--color-orange,#d97706); font-size:11px; font-weight:600;">⚠️ No orders recorded — check if this month's upload was missed</td>
+            </tr>` : `
+            <tr>
+              <td style="font-weight:600;">${monthLabel(m.month)}</td>
+              <td style="text-align:center;">${m.orderCount}</td>
+              <td style="text-align:center;">${m.pcs}</td>
+              <td style="text-align:right; font-weight:600;">${money(m.revenue)}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
+
+    // ---- Section 3: import log with type badges + coverage + revenue ----
+    const daysBetween = (a, b) => {
+      if (!a || !b) return 0;
+      return Math.round((new Date(b) - new Date(a)) / 86400000);
+    };
+    const earliestImport = imports.reduce((min, b) => (!min || String(b.Import_Date) < min) ? String(b.Import_Date) : min, null);
+    const badge = (b) => {
+      const span = daysBetween(b.minDate, b.maxDate);
+      let text, bg, fg;
+      if (b.Import_Date === earliestImport || span > 45 || b.lineCount >= 60) { text = 'Initial load'; bg = 'var(--bg-secondary)'; fg = 'var(--text-secondary)'; }
+      else if (span > 10) { text = 'Catch-up'; bg = 'var(--color-blue-light,#e8f1ff)'; fg = 'var(--color-blue,#2563eb)'; }
+      else { text = 'Weekly'; bg = 'var(--color-green-light,#e7f7ec)'; fg = 'var(--color-green,#16a34a)'; }
+      return `<span style="display:inline-block; font-size:10px; font-weight:700; padding:2px 8px; border-radius:999px; background:${bg}; color:${fg};">${text}</span>`;
+    };
+    const hasRevenue = imports.some(b => b.revenue !== undefined);
+    const importRows = imports.map(b => `
+      <tr>
+        <td><div style="font-weight:600;">${b.Import_Date}</div><div style="margin-top:2px;">${badge(b)}</div></td>
+        <td style="text-align:center;">${b.minDate && b.maxDate ? (b.minDate === b.maxDate ? b.minDate : b.minDate + ' → ' + b.maxDate) : '—'}</td>
+        <td style="text-align:center; font-weight:600;">${b.orderCount}</td>
+        <td style="text-align:center;">${b.pcs}</td>
+        ${hasRevenue ? `<td style="text-align:right;">${money(b.revenue)}</td>` : ''}
+      </tr>`).join('');
+    const importSection = `
+      <div style="font-weight:700; margin-bottom:4px; font-size:13px;">Import log — every upload</div>
+      <p class="text-xs text-secondary" style="margin-bottom:8px;">Each row is one file you uploaded, newest first. <strong>Orders covered</strong> is the span of order dates inside that file. Re-uploading is always safe — orders already recorded are skipped, never double-counted.</p>
+      <div class="table-responsive">
+        <table class="data-table" style="font-size:12px;">
+          <thead><tr>
+            <th>Uploaded</th>
+            <th style="text-align:center;">Orders covered</th>
+            <th style="text-align:center;">New orders</th>
+            <th style="text-align:center;">Pcs</th>
+            ${hasRevenue ? '<th style="text-align:right;">Net revenue</th>' : ''}
+          </tr></thead>
+          <tbody>${importRows || `<tr><td colspan="${hasRevenue ? 5 : 4}" style="text-align:center; color:var(--text-tertiary);">No imports yet.</td></tr>`}</tbody>
+        </table>
+      </div>`;
+
+    el.innerHTML = `
+      ${statusBanner}
+      <div style="font-weight:700; margin-bottom:8px; font-size:13px;">Sold vs. deducted (per product, on/after ${res.cutover})</div>
+      <div class="table-responsive" style="margin-bottom:24px;">
+        <table class="data-table" style="font-size:12px;">
+          <thead><tr>
+            <th>Product</th>
+            <th style="text-align:center;">Sold (pcs)</th>
+            <th style="text-align:center;">Deducted (pcs)</th>
+            <th style="text-align:right;">Status</th>
+          </tr></thead>
+          <tbody>${skuRows || '<tr><td colspan="4" style="text-align:center; color:var(--text-tertiary);">No online sales recorded yet.</td></tr>'}</tbody>
+        </table>
+      </div>
+      ${monthSection}
+      ${importSection}
+    `;
   }
 };

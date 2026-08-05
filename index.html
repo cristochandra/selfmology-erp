@@ -397,6 +397,16 @@
                 </button>
               </div>
             </div>
+
+            <!-- Reconciliation & Import Log (TK-002): verify every online sale had its stock deducted -->
+            <div class="card mt-lg">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                <h3 class="card-title" style="margin:0;">Stock Reconciliation & Import Log</h3>
+                <button class="btn btn-outline" id="ecom-recon-refresh" style="font-size:12px; padding:6px 12px;" onclick="Inventory.renderReconciliation(true)">Refresh</button>
+              </div>
+              <p class="text-sm text-secondary mb-lg">Checks that every online sale on/after the stock cutover has a matching stock deduction, and shows what was imported when.</p>
+              <div id="ecom-reconciliation"><p class="text-sm text-secondary">Loading reconciliation…</p></div>
+            </div>
           </div>
         </div>
 
