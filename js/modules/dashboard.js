@@ -4,6 +4,8 @@
 
 const Dashboard = {
   data: null,
+  analytics: null,
+  analyticsPeriod: 'month', // 'week' | 'month' | 'year' — drives the analytics summary range
   channel: '',
 
   setChannel(chan) {
@@ -32,14 +34,20 @@ const Dashboard = {
     const dateTo = dateToInput ? dateToInput.value : '';
     
     try {
-      const [result, summaryResult] = await Promise.all([
+      const [result, summaryResult, analyticsResult] = await Promise.all([
         API.call('getDashboardData', { dateFrom, dateTo, channel: this.channel }),
-        API.call('getStockSummary')
+        API.call('getStockSummary'),
+        // Analytics is best-effort: if the backend action isn't deployed yet
+        // (older Code.gs), it just returns an error and we render empty states.
+        // Its range follows the analytics period toggle (default: this month).
+        API.call('getAnalyticsData', this._analyticsRange()).catch(() => null)
       ]);
 
       if (summaryResult && summaryResult.success) {
         Inventory.summary = summaryResult.data || [];
       }
+
+      this.analytics = (analyticsResult && analyticsResult.success) ? analyticsResult.data : null;
 
       if (result && result.success) {
         this.data = result.data;
@@ -98,6 +106,9 @@ const Dashboard = {
       }
       alertContainer.innerHTML = alertsHtml;
     }
+
+    // Analytics section (profit/margin, trends, channel, customers, weekly online)
+    this.renderAnalytics(this.analytics);
 
     // Cashflow (Income vs Expense) chart
     this.renderCashflow(d.cashflow);
@@ -244,6 +255,256 @@ const Dashboard = {
     if (abs >= 1e3) return `${sign}${Math.round(abs / 1e3)}K`;
     return `${sign}${abs}`;
   },
+
+  // ============================================================
+  // ANALYTICS RENDERING (profit/margin, trends, channel, weekly online)
+  // ============================================================
+  _emptyState(icon, text) {
+    return `<div class="empty-state"><div class="empty-state-icon">${icon}</div><p class="empty-state-text">${text}</p></div>`;
+  },
+
+  renderAnalytics(a) {
+    this._setPeriodActive();
+    const label = document.getElementById('analytics-range-label');
+    if (label) label.textContent = (a && a.dateFrom) ? `${a.dateFrom} → ${a.dateTo}` : '';
+    this.renderCogsWarning(a && a.cogsCoverage);
+    this.renderAnalyticsKpis(a && a.totals);
+    this.renderMarginTrend(a && a.monthly);
+    this.renderWeeklyOnline(a && a.weeklyOnline);
+    this.renderChannelSplit(a && a.channelSplit);
+    this.renderTopMargin(a && a.topSkusByMargin);
+  },
+
+  // Range for the analytics summary (KPIs, channel split, top SKUs) based on
+  // the selected period. Trend charts keep their own fixed 12-mo / 12-wk windows.
+  _analyticsRange() {
+    const now = new Date();
+    const fmt = (d) => {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    };
+    const p = this.analyticsPeriod || 'month';
+    let from;
+    if (p === 'week') {
+      const dow = (now.getDay() + 6) % 7; // Mon = 0
+      from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - dow);
+    } else if (p === 'year') {
+      from = new Date(now.getFullYear(), 0, 1);
+    } else {
+      from = new Date(now.getFullYear(), now.getMonth(), 1);
+    }
+    return { dateFrom: fmt(from), dateTo: fmt(now) };
+  },
+
+  _setPeriodActive() {
+    ['week', 'month', 'year'].forEach(p => {
+      const btn = document.getElementById('ana-period-' + p);
+      if (!btn) return;
+      if (p === (this.analyticsPeriod || 'month')) {
+        btn.classList.add('active');
+        btn.style.background = '';
+        btn.style.color = '';
+      } else {
+        btn.classList.remove('active');
+        btn.style.background = 'transparent';
+        btn.style.color = 'var(--text-secondary)';
+      }
+    });
+  },
+
+  setAnalyticsPeriod(p) {
+    this.analyticsPeriod = p;
+    this.loadAnalytics();
+  },
+
+  // Re-fetch only the analytics block for the current period (used by the
+  // Weekly / Monthly / Annual toggle without reloading the whole dashboard).
+  async loadAnalytics() {
+    this._setPeriodActive();
+    try {
+      const res = await API.call('getAnalyticsData', this._analyticsRange());
+      this.analytics = (res && res.success) ? res.data : null;
+    } catch (e) {
+      this.analytics = null;
+    }
+    this.renderAnalytics(this.analytics);
+  },
+
+  renderCogsWarning(cov) {
+    const el = document.getElementById('analytics-cogs-warning');
+    if (!el) return;
+    if (!cov || !cov.missingCount) { el.innerHTML = ''; return; }
+    const names = (cov.missing || []).slice(0, 8).map(m => m.Product_Name || m.SKU).join(', ');
+    el.innerHTML = `
+      <div class="alert alert-warning" style="cursor:default;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="18" height="18"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        <span><strong>${cov.missingCount}</strong> of ${cov.totalSKUs} SKUs have no COGS set — margin figures exclude their cost and may be overstated.${names ? ` Missing: ${names}${cov.missingCount > 8 ? '…' : ''}` : ''}</span>
+      </div>`;
+  },
+
+  renderAnalyticsKpis(t) {
+    const el = document.getElementById('analytics-kpis');
+    if (!el) return;
+    if (!t) {
+      el.innerHTML = `<div class="card" style="grid-column:1/-1;">${this._emptyState('📊', 'Analytics unavailable — deploy the latest backend (getAnalyticsData) to enable.')}</div>`;
+      return;
+    }
+    const cards = [
+      { label: 'Revenue', value: App.formatCurrency(t.revenue), color: 'var(--color-mint)' },
+      { label: 'COGS', value: App.formatCurrency(t.cogs), color: 'var(--color-red)' },
+      { label: 'Gross Margin', value: App.formatCurrency(t.margin), color: t.margin >= 0 ? 'var(--color-mint)' : 'var(--color-red)' },
+      { label: 'Margin %', value: `${t.marginPct}%`, color: 'var(--color-primary)' }
+    ];
+    el.innerHTML = cards.map(c => `
+      <div class="card analytics-kpi">
+        <div class="analytics-kpi-label">${c.label}</div>
+        <div class="analytics-kpi-value" style="color:${c.color};">${c.value}</div>
+      </div>`).join('');
+  },
+
+  // Reusable inline-SVG multi-line chart. labels: string[]; series:
+  // [{name, color, values:number[], fill?}]. Self-contained, theme-aware
+  // via CSS custom properties, no external dependency.
+  _svgMultiLine(labels, series, opts) {
+    opts = opts || {};
+    const W = 640, H = 220, padL = 8, padR = 8, padT = 12, padB = 26;
+    const n = labels.length;
+    if (!n) return this._emptyState('📈', 'No data yet');
+    let maxV = 0;
+    series.forEach(s => s.values.forEach(v => { if (Number(v) > maxV) maxV = Number(v); }));
+    if (maxV <= 0) maxV = 1;
+    const innerW = W - padL - padR, innerH = H - padT - padB;
+    const x = (i) => padL + (n === 1 ? innerW / 2 : (innerW * i / (n - 1)));
+    const y = (v) => padT + innerH - (Math.max(0, Number(v)) / maxV) * innerH;
+    let grid = '';
+    for (let g = 0; g <= 4; g++) {
+      const gy = (padT + innerH * g / 4).toFixed(1);
+      grid += `<line x1="${padL}" y1="${gy}" x2="${W - padR}" y2="${gy}" stroke="var(--border-light)" stroke-width="1"/>`;
+    }
+    let paths = '';
+    series.forEach(s => {
+      const pts = s.values.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+      if (s.fill) {
+        const area = `${padL},${(padT + innerH).toFixed(1)} ${pts} ${x(n - 1).toFixed(1)},${(padT + innerH).toFixed(1)}`;
+        paths += `<polygon points="${area}" fill="${s.color}" opacity="0.10"/>`;
+      }
+      paths += `<polyline points="${pts}" fill="none" stroke="${s.color}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>`;
+      paths += s.values.map((v, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(v).toFixed(1)}" r="2.6" fill="${s.color}"><title>${labels[i]}: ${opts.fmt ? opts.fmt(v) : v}</title></circle>`).join('');
+    });
+    const step = n > 8 ? Math.ceil(n / 6) : 1;
+    let xlab = '';
+    for (let i = 0; i < n; i++) {
+      if (i % step !== 0 && i !== n - 1) continue;
+      xlab += `<text x="${x(i).toFixed(1)}" y="${H - 8}" font-size="10" fill="var(--text-tertiary)" text-anchor="middle">${labels[i]}</text>`;
+    }
+    const legend = series.map(s => `<span style="display:inline-flex; align-items:center; gap:5px; margin-right:14px; font-size:12px;"><span style="width:12px;height:3px;border-radius:2px;background:${s.color};display:inline-block;"></span>${s.name}</span>`).join('');
+    return `
+      <div style="margin-bottom:10px;">${legend}</div>
+      <div style="overflow-x:auto;">
+        <svg viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="xMidYMid meet" style="min-width:420px; display:block;">
+          ${grid}${paths}${xlab}
+        </svg>
+      </div>`;
+  },
+
+  renderMarginTrend(monthly) {
+    const el = document.getElementById('margin-trend-chart');
+    if (!el) return;
+    if (!monthly || !monthly.length || monthly.every(m => !m.revenue && !m.cogs)) {
+      el.innerHTML = this._emptyState('📈', 'No revenue in the last 12 months');
+      return;
+    }
+    const labels = monthly.map(m => m.label);
+    const series = [
+      { name: 'Revenue', color: 'var(--color-mint)', values: monthly.map(m => m.revenue), fill: true },
+      { name: 'COGS', color: 'var(--color-red)', values: monthly.map(m => m.cogs) },
+      { name: 'Margin', color: 'var(--color-primary)', values: monthly.map(m => m.margin) }
+    ];
+    el.innerHTML = this._svgMultiLine(labels, series, { fmt: (v) => App.formatCurrency(v) });
+  },
+
+  // Renders a "delta pill" for one metric: current value + increment vs the
+  // previous week (absolute Δ and % change), coloured up/down.
+  _weekDeltaCard(label, cur, prev, fmt) {
+    const d = cur - prev;
+    const isZero = d === 0;
+    const up = d > 0;
+    const arrow = isZero ? '→' : (up ? '▲' : '▼');
+    const color = isZero ? 'var(--text-tertiary)' : (up ? 'var(--color-mint)' : 'var(--color-red)');
+    const prefix = isZero ? '' : (up ? '+' : '−');
+    const pct = prev > 0 ? Math.round((d / prev) * 1000) / 10 : null;
+    const pctStr = (pct === null) ? (prev === 0 && cur > 0 ? ' · new' : '') : ` · ${pct > 0 ? '+' : ''}${pct}%`;
+    return `
+      <div class="card" style="padding:12px 14px;">
+        <div class="text-xs text-secondary" style="margin-bottom:4px;">${label}</div>
+        <div style="font-size:17px; font-weight:700; line-height:1.2;">${fmt(cur)}</div>
+        <div style="font-size:12px; font-weight:600; color:${color}; margin-top:5px;">${arrow} ${prefix}${fmt(Math.abs(d))}${pctStr}</div>
+        <div class="text-xs text-tertiary" style="margin-top:2px;">prev week: ${fmt(prev)}</div>
+      </div>`;
+  },
+
+  renderWeeklyOnline(weekly) {
+    const el = document.getElementById('weekly-online-chart');
+    if (!el) return;
+    if (!weekly || !weekly.length || weekly.every(w => !w.revenue)) {
+      el.innerHTML = this._emptyState('🛒', 'No completed online sales in the last 12 weeks');
+      return;
+    }
+    const cur = weekly[weekly.length - 1];
+    const prev = weekly[weekly.length - 2] || { revenue: 0, units: 0, orders: 0 };
+    const num = (v) => Number(v || 0).toLocaleString();
+    const cards =
+      this._weekDeltaCard('Revenue', cur.revenue, prev.revenue, (v) => App.formatCurrency(v)) +
+      this._weekDeltaCard('Units sold', cur.units, prev.units, num) +
+      this._weekDeltaCard('Orders', cur.orders, prev.orders, num);
+    const header = `
+      <div class="text-xs text-secondary" style="margin-bottom:8px;">
+        This week (${cur.label}) vs last week (${prev.label || '—'})
+      </div>
+      <div style="display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:10px; margin-bottom:16px;">
+        ${cards}
+      </div>`;
+    const labels = weekly.map(w => w.label);
+    const series = [{ name: 'Online revenue', color: 'var(--color-blue)', values: weekly.map(w => w.revenue), fill: true }];
+    el.innerHTML = header + this._svgMultiLine(labels, series, { fmt: (v) => App.formatCurrency(v) });
+  },
+
+  renderChannelSplit(split) {
+    const el = document.getElementById('channel-split-chart');
+    if (!el) return;
+    const rows = (split || []).filter(s => s.revenue || s.margin);
+    if (!rows.length) { el.innerHTML = this._emptyState('🧭', 'No revenue in range'); return; }
+    const max = Math.max(1, ...rows.map(s => s.revenue));
+    const colors = { Online: 'var(--color-blue)', B2B: 'var(--color-mint)', Offline: 'var(--color-purple)' };
+    el.innerHTML = rows.map(s => {
+      const pct = (s.revenue / max) * 100;
+      const mPct = s.revenue > 0 ? Math.round((s.margin / s.revenue) * 100) : 0;
+      return `
+        <div class="bar-row" style="align-items:center;">
+          <div class="bar-label" title="${s.channel}">${s.channel}</div>
+          <div class="bar-track"><div class="bar-fill" style="width:${pct}%; background:${colors[s.channel] || 'var(--color-primary)'};"></div></div>
+          <div class="bar-value" style="min-width:160px; text-align:right;">${App.formatCurrency(s.revenue)} <span class="text-xs text-secondary">· ${mPct}% mgn</span></div>
+        </div>`;
+    }).join('');
+  },
+
+  renderTopMargin(items) {
+    const el = document.getElementById('top-margin-list');
+    if (!el) return;
+    if (!items || !items.length) { el.innerHTML = this._emptyState('🏆', 'No sales in range'); return; }
+    el.innerHTML = items.map((it, idx) => `
+      <div class="list-item" style="cursor:pointer;" onclick="Inventory.showSkuDetails('${it.SKU}')">
+        <div class="list-item-icon" style="background:var(--color-mint-light); color:var(--color-mint); font-weight:700;">${idx + 1}</div>
+        <div class="list-item-content">
+          <div class="list-item-title">${it.Product_Name}</div>
+          <div class="list-item-meta">${it.SKU} · ${it.units} sold · ${it.marginPct}% margin</div>
+        </div>
+        <div class="list-item-value" style="color:${it.margin >= 0 ? 'var(--color-mint)' : 'var(--color-red)'};">${App.formatCurrency(it.margin)}</div>
+      </div>`).join('');
+  },
+
 
   renderPendingInvoices(items) {
     const container = document.getElementById('pending-invoices-list');

@@ -99,6 +99,7 @@ function handleRequest(e) {
       case 'uploadFileToDrive':   result = uploadFileToDrive(data); break;
       case 'getCustomers':        result = getCustomers(); break;
       case 'getDashboardData':    result = getDashboardData(data); break;
+      case 'getAnalyticsData':    result = getAnalyticsData(data); break;
       case 'getUsers':            result = getUsers(); break;
       case 'addUser':             result = addUser(data); break;
       case 'updateUser':          result = updateUser(data); break;
@@ -1223,6 +1224,248 @@ function computeCashflowSeries(args) {
   });
 
   return order.map(k => buckets[k]);
+}
+
+// ============================================================
+// ANALYTICS (Dashboard)  —  profit/margin, trends, channel & customer
+// analytics, and weekly online-sales performance. Read-only aggregation
+// over existing sheets; no schema changes. Revenue basis mirrors
+// computeCashflowSeries() so figures reconcile with the cashflow chart.
+// ============================================================
+function getAnalyticsData(options) {
+  options = options || {};
+  try { migrateSchemaV2(); } catch (e) {}
+
+  const master        = getSheetData(SHEETS.MASTER_DATA);
+  const invoices      = getSheetData(SHEETS.INVOICES);
+  const lineItems     = getSheetData(SHEETS.INVOICE_LINE_ITEMS) || [];
+  const deliveryOrders= getSheetData(SHEETS.DELIVERY_ORDERS);
+  const ecommerceSales= getSheetData(SHEETS.ECOMMERCE_SALES) || [];
+  const offlineIncome = getSheetData(SHEETS.OFFLINE_INCOME) || [];
+
+  const now = new Date();
+  const tz = Session.getScriptTimeZone();
+  const todayStr = formatDate(now);
+
+  // Range default = trailing 12 months (used by the range-bound blocks:
+  // channel split, top SKUs, customer leaderboard, totals). The monthly
+  // trend and weekly-online blocks always use their own fixed windows.
+  let dateFrom = options.dateFrom || '';
+  let dateTo = options.dateTo || '';
+  if (!dateFrom && !dateTo) {
+    dateFrom = formatDate(new Date(now.getFullYear(), now.getMonth() - 11, 1));
+    dateTo = todayStr;
+  }
+  const inRange = (dStr) => {
+    if (!dStr) return false;
+    if (dateFrom && dStr < dateFrom) return false;
+    if (dateTo && dStr > dateTo) return false;
+    return true;
+  };
+  const isCompleted = (status) => {
+    const s = String(status || '').toLowerCase();
+    return s.indexOf('selesai') !== -1 || s.indexOf('completed') !== -1;
+  };
+  const netRevOf = (r) => {
+    let net = Number(r.Net_Revenue);
+    if (!(net || net === 0)) net = Number(r.Total_Price) || 0;
+    return isNaN(net) ? 0 : net;
+  };
+
+  // COGS + product-name lookups per SKU
+  const cogsBySku = {};
+  const nameBySku = {};
+  master.forEach(p => {
+    const sku = String(p.SKU).trim();
+    cogsBySku[sku] = Number(p.COGS) || 0;
+    nameBySku[sku] = p.Product_Name || sku;
+  });
+  const cogsOf = (sku, qty) => (cogsBySku[String(sku).trim()] || 0) * (Number(qty) || 0);
+
+  // Paid invoices (mirror cashflow: not cancelled + Paid on DO or invoice),
+  // dated by payment-received date (DO.Payment_Date) or invoice creation date.
+  const doByInvoice = {};
+  deliveryOrders.forEach(d => { const inv = String(d.Invoice_ID || '').trim(); if (inv) doByInvoice[inv] = d; });
+  const paidInvoices = invoices.filter(inv => {
+    if (String(inv.Status || '') === 'Cancelled') return false;
+    const doItem = doByInvoice[String(inv.Invoice_ID || '').trim()];
+    return (doItem && doItem.Payment_Status === 'Paid') || inv.Payment_Status === 'Paid';
+  });
+  const invPayDate = (inv) => {
+    const doItem = doByInvoice[String(inv.Invoice_ID || '').trim()];
+    return (doItem && doItem.Payment_Date) ? formatDate(doItem.Payment_Date) : formatDate(inv.Date_Created);
+  };
+
+  // B2B COGS basis: sum of (qty × COGS) over each invoice's line items,
+  // recognised on the invoice's payment date — the SAME basis as B2B revenue.
+  // We deliberately do NOT use Inventory_Out 'B2B Sales' rows for COGS: those
+  // are written only when a Delivery Order is executed (dated by execution date,
+  // keyed by DO), so a paid invoice whose DO isn't executed would book revenue
+  // with zero cost and massively overstate margin.
+  const cogsByInvoice = {};
+  lineItems.forEach(li => {
+    const invId = String(li.Invoice_ID || '').trim();
+    if (!invId) return;
+    cogsByInvoice[invId] = (cogsByInvoice[invId] || 0) + cogsOf(li.SKU, li.Quantity);
+  });
+  const invCogs = (inv) => cogsByInvoice[String(inv.Invoice_ID || '').trim()] || 0;
+
+  // ---------- Channel split + range totals ----------
+  let onlineRev = 0, onlineCogs = 0, b2bRev = 0, b2bCogs = 0, offlineRev = 0;
+  ecommerceSales.forEach(r => {
+    if (!isCompleted(r.Status)) return;
+    const rDate = r.Date ? formatDate(r.Date) : '';
+    if (!inRange(rDate)) return;
+    onlineRev += netRevOf(r);
+    onlineCogs += cogsOf(r.SKU, r.Quantity);
+  });
+  paidInvoices.forEach(inv => {
+    if (!inRange(invPayDate(inv))) return;
+    b2bRev += Number(inv.Total_Amount) || 0;
+    b2bCogs += invCogs(inv);
+  });
+  offlineIncome.forEach(r => {
+    const rDate = r.Date ? formatDate(r.Date) : '';
+    if (inRange(rDate)) offlineRev += Number(r.Amount) || 0;
+  });
+  const channelSplit = [
+    { channel: 'Online',  revenue: onlineRev,  cogs: onlineCogs, margin: onlineRev - onlineCogs },
+    { channel: 'B2B',     revenue: b2bRev,     cogs: b2bCogs,    margin: b2bRev - b2bCogs },
+    { channel: 'Offline', revenue: offlineRev, cogs: 0,          margin: offlineRev }
+  ];
+
+  // ---------- Monthly revenue / COGS / margin trend (fixed 12 months) ----------
+  const months = 12;
+  const mBuckets = {}, mOrder = [];
+  for (let i = months - 1; i >= 0; i--) {
+    const dt = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const key = Utilities.formatDate(dt, tz, 'yyyy-MM');
+    mBuckets[key] = { month: key, label: Utilities.formatDate(dt, tz, 'MMM yy'), revenue: 0, cogs: 0 };
+    mOrder.push(key);
+  }
+  const monthKeyOf = (d) => { try { return Utilities.formatDate(new Date(d), tz, 'yyyy-MM'); } catch (e) { return ''; } };
+  const addRev  = (dStr, amt) => { const k = monthKeyOf(dStr); if (mBuckets[k]) mBuckets[k].revenue += Number(amt) || 0; };
+  const addCogs = (dStr, amt) => { const k = monthKeyOf(dStr); if (mBuckets[k]) mBuckets[k].cogs += Number(amt) || 0; };
+  ecommerceSales.forEach(r => {
+    if (!isCompleted(r.Status)) return;
+    addRev(r.Date, netRevOf(r));
+    addCogs(r.Date, cogsOf(r.SKU, r.Quantity));
+  });
+  paidInvoices.forEach(inv => { const pd = invPayDate(inv); addRev(pd, Number(inv.Total_Amount) || 0); addCogs(pd, invCogs(inv)); });
+  offlineIncome.forEach(r => { addRev(r.Date, Number(r.Amount) || 0); });
+  const monthly = mOrder.map(k => {
+    const b = mBuckets[k];
+    const margin = b.revenue - b.cogs;
+    return { month: b.month, label: b.label, revenue: b.revenue, cogs: b.cogs, margin: margin,
+             marginPct: b.revenue > 0 ? Math.round((margin / b.revenue) * 1000) / 10 : 0 };
+  });
+
+  // ---------- Weekly online performance (fixed trailing 12 ISO weeks) ----------
+  const weeks = 12, msDay = 86400000;
+  const dow = (now.getDay() + 6) % 7; // Mon=0
+  const thisMonday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - dow);
+  const wBuckets = {}, wOrder = [];
+  for (let i = weeks - 1; i >= 0; i--) {
+    const start = new Date(thisMonday.getTime() - i * 7 * msDay);
+    const key = Utilities.formatDate(start, tz, 'yyyy-MM-dd');
+    wBuckets[key] = { weekStart: key, label: Utilities.formatDate(start, tz, 'd MMM'), revenue: 0, units: 0, orders: {} };
+    wOrder.push(key);
+  }
+  const weekKeyOf = (d) => {
+    try {
+      const dt = new Date(d);
+      const wd = (dt.getDay() + 6) % 7;
+      const mon = new Date(dt.getFullYear(), dt.getMonth(), dt.getDate() - wd);
+      return Utilities.formatDate(mon, tz, 'yyyy-MM-dd');
+    } catch (e) { return ''; }
+  };
+  ecommerceSales.forEach(r => {
+    if (!isCompleted(r.Status)) return;
+    const k = weekKeyOf(r.Date);
+    if (!wBuckets[k]) return;
+    wBuckets[k].revenue += netRevOf(r);
+    wBuckets[k].units += Number(r.Quantity) || 0;
+    const oid = String(r.Order_ID || '').trim();
+    if (oid) wBuckets[k].orders[oid] = true;
+  });
+  const weeklyOnline = wOrder.map((k, idx) => {
+    const b = wBuckets[k];
+    const rev = b.revenue;
+    const prev = idx > 0 ? wBuckets[wOrder[idx - 1]].revenue : null;
+    const wow = (prev && prev > 0) ? Math.round(((rev - prev) / prev) * 1000) / 10 : null;
+    return { weekStart: b.weekStart, label: b.label, revenue: rev, units: b.units,
+             orders: Object.keys(b.orders).length, wowPct: wow };
+  });
+
+  // ---------- Top SKUs by gross margin (in range) ----------
+  const skuAgg = {};
+  const bumpSku = (sku, rev, cogs, units) => {
+    const s = String(sku || '').trim(); if (!s) return;
+    if (!skuAgg[s]) skuAgg[s] = { SKU: s, revenue: 0, cogs: 0, units: 0 };
+    skuAgg[s].revenue += rev || 0; skuAgg[s].cogs += cogs || 0; skuAgg[s].units += units || 0;
+  };
+  ecommerceSales.forEach(r => {
+    if (!isCompleted(r.Status)) return;
+    const rDate = r.Date ? formatDate(r.Date) : '';
+    if (!inRange(rDate)) return;
+    bumpSku(r.SKU, netRevOf(r), cogsOf(r.SKU, r.Quantity), Number(r.Quantity) || 0);
+  });
+  const paidInvById = {};
+  paidInvoices.forEach(inv => { if (inRange(invPayDate(inv))) paidInvById[String(inv.Invoice_ID || '').trim()] = true; });
+  lineItems.forEach(li => {
+    if (!paidInvById[String(li.Invoice_ID || '').trim()]) return;
+    bumpSku(li.SKU, Number(li.Line_Total) || 0, cogsOf(li.SKU, li.Quantity), Number(li.Quantity) || 0);
+  });
+  const topSkusByMargin = Object.keys(skuAgg).map(k => {
+    const s = skuAgg[k];
+    const margin = s.revenue - s.cogs;
+    return { SKU: s.SKU, Product_Name: nameBySku[s.SKU] || s.SKU, revenue: s.revenue, cogs: s.cogs,
+             margin: margin, units: s.units, marginPct: s.revenue > 0 ? Math.round((margin / s.revenue) * 1000) / 10 : 0 };
+  }).sort((a, b) => b.margin - a.margin).slice(0, 10);
+
+  // ---------- Customer leaderboard (paid invoices in range) ----------
+  const custAgg = {};
+  paidInvoices.forEach(inv => {
+    if (!inRange(invPayDate(inv))) return;
+    const name = (String(inv.Customer_Name || '').trim()) || 'Unknown';
+    if (!custAgg[name]) custAgg[name] = { customer: name, revenue: 0, orders: 0 };
+    custAgg[name].revenue += Number(inv.Total_Amount) || 0;
+    custAgg[name].orders += 1;
+  });
+  const customerLeaderboard = Object.keys(custAgg).map(k => custAgg[k])
+    .sort((a, b) => b.revenue - a.revenue).slice(0, 10);
+
+  // ---------- COGS coverage (data-quality guardrail) ----------
+  const missing = master.filter(p => !(Number(p.COGS) > 0))
+    .map(p => ({ SKU: p.SKU, Product_Name: p.Product_Name }));
+  const cogsCoverage = {
+    totalSKUs: master.length,
+    withCogs: master.length - missing.length,
+    missingCount: missing.length,
+    missing: missing.slice(0, 50)
+  };
+
+  const totalRevenue = onlineRev + b2bRev + offlineRev;
+  const totalCogs = onlineCogs + b2bCogs;
+  const totalMargin = totalRevenue - totalCogs;
+
+  return {
+    success: true,
+    data: {
+      dateFrom: dateFrom,
+      dateTo: dateTo,
+      totals: {
+        revenue: totalRevenue, cogs: totalCogs, margin: totalMargin,
+        marginPct: totalRevenue > 0 ? Math.round((totalMargin / totalRevenue) * 1000) / 10 : 0
+      },
+      monthly: monthly,
+      weeklyOnline: weeklyOnline,
+      channelSplit: channelSplit,
+      topSkusByMargin: topSkusByMargin,
+      customerLeaderboard: customerLeaderboard,
+      cogsCoverage: cogsCoverage
+    }
+  };
 }
 
 // ============================================================

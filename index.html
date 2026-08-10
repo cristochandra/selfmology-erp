@@ -116,6 +116,47 @@
           </div>
         </div>
 
+        <!-- ANALYTICS: profit/margin, trends, channel, weekly online -->
+        <div class="section-header mt-lg" style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
+          <h2 class="section-title" style="margin:0;">Analytics</h2>
+          <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+            <div style="display:flex; background:var(--bg-secondary); padding:2px; border-radius:6px; gap:2px;">
+              <button class="btn btn-xs" id="ana-period-week" onclick="Dashboard.setAnalyticsPeriod('week')" style="font-size:10px; padding:4px 10px; border-radius:4px; background:transparent; color:var(--text-secondary);">Weekly</button>
+              <button class="btn btn-xs active" id="ana-period-month" onclick="Dashboard.setAnalyticsPeriod('month')" style="font-size:10px; padding:4px 10px; border-radius:4px;">Monthly</button>
+              <button class="btn btn-xs" id="ana-period-year" onclick="Dashboard.setAnalyticsPeriod('year')" style="font-size:10px; padding:4px 10px; border-radius:4px; background:transparent; color:var(--text-secondary);">Annual</button>
+            </div>
+            <span class="text-xs text-secondary" id="analytics-range-label"></span>
+          </div>
+        </div>
+        <div id="analytics-cogs-warning" class="mb-md"></div>
+
+        <div class="analytics-kpis mb-lg" id="analytics-kpis"></div>
+
+        <div class="section-header mt-lg">
+          <h2 class="section-title" style="margin:0;">Profit Trend — Revenue vs COGS vs Margin (12 mo)</h2>
+        </div>
+        <div id="margin-trend-chart" class="card mb-xl" style="padding:18px;"></div>
+
+        <div class="dash-charts">
+          <div class="dash-col">
+            <div class="section-header mt-lg">
+              <h2 class="section-title" style="margin:0;">Weekly Online Sales (12 wk)</h2>
+            </div>
+            <div id="weekly-online-chart" class="card mb-xl" style="padding:18px;"></div>
+          </div>
+          <div class="dash-col">
+            <div class="section-header mt-lg">
+              <h2 class="section-title" style="margin:0;">Revenue &amp; Margin by Channel</h2>
+            </div>
+            <div id="channel-split-chart" class="card mb-xl" style="padding:18px;"></div>
+          </div>
+        </div>
+
+        <div class="section-header mt-lg">
+          <h2 class="section-title" style="margin:0;">Top SKUs by Gross Margin</h2>
+        </div>
+        <div id="top-margin-list" class="card mb-xl" style="padding:14px;"></div>
+
         <div class="section-header mt-lg">
           <h2 class="section-title" style="margin:0;">Cashflow — Income vs Expense (Monthly)</h2>
         </div>
@@ -535,7 +576,7 @@
 <!-- Scripts -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="js/app.js"></script>
-<script src="js/modules/dashboard.js"></script>
+<script src="js/modules/dashboard.js?v=analytics-1"></script>
 <script src="js/modules/master-data.js"></script>
 <script src="js/modules/inventory.js"></script>
 <script src="js/modules/invoices.js?v=2.2"></script>

@@ -416,6 +416,28 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
   margin-bottom: var(--space-xl);
 }
 
+/* ---- Analytics summary tiles (Dashboard) ---- */
+.analytics-kpis {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-md);
+}
+.analytics-kpi {
+  padding: var(--space-md) var(--space-lg);
+  text-align: left;
+}
+.analytics-kpi-label {
+  font-size: var(--font-xs);
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+.analytics-kpi-value {
+  font-size: 1.15rem;
+  font-weight: 700;
+  line-height: 1.2;
+  word-break: break-word;
+}
+
 .kpi-card {
   background: var(--bg-primary);
   border: 1px solid var(--border-light);
@@ -1571,6 +1593,7 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
     align-items: start;
   }
   .dash-charts .bar-chart { margin-bottom: 0; }
+  .analytics-kpis { grid-template-columns: repeat(4, 1fr); }
 
   .modal { max-width: 560px; }
 
