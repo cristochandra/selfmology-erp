@@ -1445,9 +1445,14 @@ function getAnalyticsData(options) {
     missing: missing.slice(0, 50)
   };
 
-  const totalRevenue = onlineRev + b2bRev + offlineRev;
+  // Margin is computed only on channels with a known cost basis (Online + B2B).
+  // Offline income is manually-tracked cash with no SKU/COGS, so counting it
+  // would make it look like 100%-margin and inflate the profit ratio. We still
+  // report its revenue in the Revenue figure; we just exclude it from margin.
+  const costedRevenue = onlineRev + b2bRev;
+  const totalRevenue = costedRevenue + offlineRev;
   const totalCogs = onlineCogs + b2bCogs;
-  const totalMargin = totalRevenue - totalCogs;
+  const costedMargin = costedRevenue - totalCogs;
 
   return {
     success: true,
@@ -1455,8 +1460,10 @@ function getAnalyticsData(options) {
       dateFrom: dateFrom,
       dateTo: dateTo,
       totals: {
-        revenue: totalRevenue, cogs: totalCogs, margin: totalMargin,
-        marginPct: totalRevenue > 0 ? Math.round((totalMargin / totalRevenue) * 1000) / 10 : 0
+        revenue: totalRevenue, cogs: totalCogs, margin: costedMargin,
+        marginPct: costedRevenue > 0 ? Math.round((costedMargin / costedRevenue) * 1000) / 10 : 0,
+        offlineRevenue: offlineRev,
+        excludesOffline: offlineRev > 0
       },
       monthly: monthly,
       weeklyOnline: weeklyOnline,

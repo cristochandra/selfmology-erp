@@ -351,16 +351,19 @@ const Dashboard = {
       el.innerHTML = `<div class="card" style="grid-column:1/-1;">${this._emptyState('📊', 'Analytics unavailable — deploy the latest backend (getAnalyticsData) to enable.')}</div>`;
       return;
     }
+    const excl = t.excludesOffline ? 'excl. offline' : '';
     const cards = [
-      { label: 'Revenue', value: App.formatCurrency(t.revenue), color: 'var(--color-mint)' },
-      { label: 'COGS', value: App.formatCurrency(t.cogs), color: 'var(--color-red)' },
-      { label: 'Gross Margin', value: App.formatCurrency(t.margin), color: t.margin >= 0 ? 'var(--color-mint)' : 'var(--color-red)' },
-      { label: 'Margin %', value: `${t.marginPct}%`, color: 'var(--color-primary)' }
+      { label: 'Revenue', value: App.formatCurrency(t.revenue), color: 'var(--color-mint)',
+        note: (t.offlineRevenue > 0) ? `incl. ${App.formatCurrency(t.offlineRevenue)} offline` : '' },
+      { label: 'COGS', value: App.formatCurrency(t.cogs), color: 'var(--color-red)', note: '' },
+      { label: 'Gross Margin', value: App.formatCurrency(t.margin), color: t.margin >= 0 ? 'var(--color-mint)' : 'var(--color-red)', note: excl },
+      { label: 'Margin %', value: `${t.marginPct}%`, color: 'var(--color-primary)', note: excl }
     ];
     el.innerHTML = cards.map(c => `
       <div class="card analytics-kpi">
         <div class="analytics-kpi-label">${c.label}</div>
         <div class="analytics-kpi-value" style="color:${c.color};">${c.value}</div>
+        ${c.note ? `<div class="text-xs text-tertiary" style="margin-top:3px;">${c.note}</div>` : ''}
       </div>`).join('');
   },
 
