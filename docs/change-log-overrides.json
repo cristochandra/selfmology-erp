@@ -1,7 +1,15 @@
 {
+  "1801252": {
+    "detail": "Shopee parent SKUs renamed numeric -> alpha and listings consolidated; variation SKU's third segment is now the pack quantity. Both schemes stay mapped so historical months re-upload identically. Fixes two silent bundle under-deductions (0010/B-0010, 007). Product name is now cross-checked against the SKU map on every row and disagreements are surfaced before confirmation. Adds SM-AUV-025 (Acneshield) and BD-06.",
+    "ticket": "TK-005",
+    "risk": "High",
+    "verification": "Replayed all 7 historical order exports: 400/418 lines resolve identically, and the 18 that changed are the two bundle fixes. All 22 renamed listings resolve correctly; 13 pack-size and cross-check edge cases pass; 0 false-positive warnings across 418 historical lines and 34 renamed listings.",
+    "rollback": "git revert 1801252. No stored data is written by this change itself, but any re-upload performed after it will have deducted the previously-missing bundle components — remove those Inventory_Out rows by Reference_ID if reverting.",
+    "status": "Shipped"
+  },
   "_comment": "Curated metadata per commit, keyed by short SHA. Everything else in the Change Log is generated from git. See docs/CHANGE_MANAGEMENT.md. Add an entry here whenever a meaningful change ships; commits with no entry still appear, with blank Detail/Risk/Verification/Rollback.",
-
   "_versions": {
+    "1801252": "2.9.0",
     "_comment": "commit SHA -> release version it shipped in. Earliest commit of a version anchors it; later commits inherit the most recent version at or before them.",
     "2c88e3a": "1.0.0",
     "dadc958": "1.1.0",
@@ -13,27 +21,15 @@
     "c114fd5": "2.5.0",
     "f2f175c": "2.6.0",
     "e03e427": "2.7.0",
-    "6c70af4": "2.8.0",
-    "1801252": "2.9.0"
+    "6c70af4": "2.8.0"
   },
-
   "_releases": {
     "_comment": "Per-version Known Issues / Notes / Owner. A caveat is exactly what a commit message doesn't say, so it cannot be generated — write it here.",
     "2.9.0": {
       "knownIssues": "TK-007 BD-05 DUO Bestfriend Gift Set has no confirmed composition — it is on the ignore list, so selling it moves no stock. TK-008 [BUY N GET M] promo listings deduct only the paid pack size; 7 historical lines affected, behaviour deliberately unchanged pending confirmation. Shopee Product/Variation IDs for SS-08 twin & triple and for BD-06 are still TBD — create them in Shopee before the listings go live.",
-      "notes": "Backfill owed from the TK-006 bundle fix: 18 pcs SM-OCC-100, 2 pcs SM-CT-100, 2 pcs SM-UVS-025 were never deducted across Mar-Jun 2026. Re-upload those months to self-repair via the TK-002 reconciliation path. Add SM-AUV-025 to Master_Data BEFORE importing any Acneshield sale, or its COGS will be missing from margin analytics. COGS 45,500 is an estimate copied from UV Shield — replace with the actual landed cost."
+      "notes": "Backfill owed from the TK-006 bundle fix: 18 pcs SM-OCC-100, 2 pcs SM-CT-100, 2 pcs SM-UVS-025 were never deducted across Mar-Jun 2026. Re-upload those months to self-repair via the TK-002 reconciliation path. Add SM-AUV-025 to Master_Data BEFORE importing any Acneshield sale, or its COGS will be missing from margin analytics. COGS 45,500 is an estimate copied from UV Shield — replace with the actual landed cost. Deployed to production 2026-08-17; verified the live js/modules/inventory.js is byte-identical to the repo. Note the first push produced no Vercel deployment for ~13 min (TK-009) — the following push deployed normally."
     }
   },
-
-  "1801252": {
-    "detail": "Shopee parent SKUs renamed numeric -> alpha and listings consolidated; variation SKU's third segment is now the pack quantity. Both schemes stay mapped so historical months re-upload identically. Fixes two silent bundle under-deductions (0010/B-0010, 007). Product name is now cross-checked against the SKU map on every row and disagreements are surfaced before confirmation. Adds SM-AUV-025 (Acneshield) and BD-06.",
-    "ticket": "TK-005",
-    "risk": "High",
-    "verification": "Replayed all 7 historical order exports: 400/418 lines resolve identically, and the 18 that changed are the two bundle fixes. All 22 renamed listings resolve correctly; 13 pack-size and cross-check edge cases pass; 0 false-positive warnings across 418 historical lines and 34 renamed listings.",
-    "rollback": "git revert 1801252. No stored data is written by this change itself, but any re-upload performed after it will have deducted the previously-missing bundle components — remove those Inventory_Out rows by Reference_ID if reverting.",
-    "status": "Shipped"
-  },
-
   "4630cae": {
     "detail": "Change management method (docs/CHANGE_MANAGEMENT.md) plus scripts/gen-sheet-rows.mjs, which generates paste-ready tracker-sheet TSV from git history.",
     "ticket": "—",
@@ -42,7 +38,6 @@
     "rollback": "git revert 4630cae — documentation and tooling only.",
     "status": "Shipped"
   },
-
   "e03e427": {
     "detail": "Reworked the e-commerce CSV import so a re-uploaded month closes stock-out gaps without double-counting sales. Sale keys and deduction keys are tracked separately per Order_ID|SKU.",
     "ticket": "TK-002",
@@ -51,7 +46,6 @@
     "rollback": "git revert e03e427; previously-repaired Inventory_Out rows must be deleted by Reference_ID.",
     "status": "Shipped"
   },
-
   "6c70af4": {
     "detail": "Dashboard analytics: profit and margin, period-over-period trends, channel split and weekly online performance.",
     "ticket": "TK-001",
@@ -60,7 +54,6 @@
     "rollback": "git revert 6c70af4 — read-only dashboard code, no stored data affected.",
     "status": "Shipped"
   },
-
   "58498ea": {
     "detail": "Offline income rows that carry no COGS are excluded from the margin ratio, so margin is not inflated by costless income.",
     "ticket": "TK-001",
@@ -69,7 +62,6 @@
     "rollback": "git revert 58498ea — display-only.",
     "status": "Shipped"
   },
-
   "b7ab923": {
     "detail": "Historical offline income import, wired into the dashboard cashflow.",
     "ticket": "—",
@@ -78,7 +70,6 @@
     "rollback": "git revert b7ab923; delete OFFIN-* rows from the Offline_Income sheet.",
     "status": "Shipped"
   },
-
   "8d6abb8": {
     "detail": "Dividend and investment give-back payouts no longer count as operating expense or cashflow.",
     "ticket": "—",
