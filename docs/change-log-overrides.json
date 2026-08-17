@@ -1,0 +1,63 @@
+{
+  "_comment": "Curated metadata per commit, keyed by short SHA. Everything else in the Change Log is generated from git. See docs/CHANGE_MANAGEMENT.md. Add an entry here whenever a meaningful change ships; commits with no entry still appear, with blank Detail/Risk/Verification/Rollback.",
+
+  "_versions": {
+    "_comment": "commit SHA -> release version it shipped in. Earliest commit of a version anchors it; later commits inherit the most recent version at or before them.",
+    "2c88e3a": "1.0.0",
+    "dadc958": "1.1.0",
+    "225e8e4": "2.0.0",
+    "a30c3e5": "2.1.0",
+    "6fc8d8f": "2.2.0",
+    "ee06a5d": "2.3.0",
+    "20fa324": "2.4.0",
+    "c114fd5": "2.5.0",
+    "f2f175c": "2.6.0",
+    "e03e427": "2.7.0",
+    "6c70af4": "2.8.0"
+  },
+
+  "e03e427": {
+    "detail": "Reworked the e-commerce CSV import so a re-uploaded month closes stock-out gaps without double-counting sales. Sale keys and deduction keys are tracked separately per Order_ID|SKU.",
+    "ticket": "TK-002",
+    "risk": "High",
+    "verification": "Re-uploaded a full month and confirmed sales count unchanged while missing deductions were filled.",
+    "rollback": "git revert e03e427; previously-repaired Inventory_Out rows must be deleted by Reference_ID.",
+    "status": "Shipped"
+  },
+
+  "6c70af4": {
+    "detail": "Dashboard analytics: profit and margin, period-over-period trends, channel split and weekly online performance.",
+    "ticket": "TK-001",
+    "risk": "Medium",
+    "verification": "Cross-checked profit and margin against the finance tracker workbook for the same period.",
+    "rollback": "git revert 6c70af4 — read-only dashboard code, no stored data affected.",
+    "status": "Shipped"
+  },
+
+  "58498ea": {
+    "detail": "Offline income rows that carry no COGS are excluded from the margin ratio, so margin is not inflated by costless income.",
+    "ticket": "TK-001",
+    "risk": "Medium",
+    "verification": "Margin recomputed with and without offline income; difference matched the offline income total.",
+    "rollback": "git revert 58498ea — display-only.",
+    "status": "Shipped"
+  },
+
+  "b7ab923": {
+    "detail": "Historical offline income import, wired into the dashboard cashflow.",
+    "ticket": "—",
+    "risk": "Medium",
+    "verification": "Imported totals reconciled against the historical income tracker.",
+    "rollback": "git revert b7ab923; delete OFFIN-* rows from the Offline_Income sheet.",
+    "status": "Shipped"
+  },
+
+  "8d6abb8": {
+    "detail": "Dividend and investment give-back payouts no longer count as operating expense or cashflow.",
+    "ticket": "—",
+    "risk": "Medium",
+    "verification": "Expense total before/after compared against the categorized expense list.",
+    "rollback": "git revert 8d6abb8 — filter logic only.",
+    "status": "Shipped"
+  }
+}

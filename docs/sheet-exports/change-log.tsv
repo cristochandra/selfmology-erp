@@ -1,0 +1,30 @@
+Change ID	Date	Version	Type	Module	Summary	Detail	Ticket ID	Commit	Files Changed	Author	Risk	Verification	Rollback	Status
+CH-0001	2026-04-27	1.0.0	chore	Dashboard	Initial commit: Selfmology ERP with PWA support and improved UI		—	2c88e3a	14	Cristo Chandra				Shipped
+CH-0002	2026-04-27	1.0.0	chore	Users	Added user management and refined UI		—	638f3f1	5	Cristo Chandra				Shipped
+CH-0003	2026-05-02	1.1.0	feat	Dashboard	implement database locking and final production branding		—	dadc958	15	Cristo Chandra				Shipped
+CH-0004	2026-05-06	1.1.0	feat	CRM	synchronize invoice and DO numbering to start from 96, and add clearAllTransactions utility		—	fe5250e	4	Cristo Chandra				Shipped
+CH-0005	2026-05-06	1.1.0	fix		added missing resetAdminPassword utility to Code.gs		—	f0f9f28	1	Cristo Chandra				Shipped
+CH-0006	2026-05-06	1.1.0	style	Delivery	move create buttons inline for better UX on Invoices, DO, and Expenses		—	269d7d4	3	Cristo Chandra				Shipped
+CH-0007	2026-05-06	1.1.0	fix	CRM	change fixed discount to per-unit calculation for invoices		—	b41be0c	2	Cristo Chandra				Shipped
+CH-0008	2026-05-13	1.1.0	feat	CRM	update invoice PDF format and add draft edit functionality		—	d5799b1	2	Cristo Chandra				Shipped
+CH-0009	2026-05-13	1.1.0	fix	CRM	reliably deduce line-item and overall discounts dynamically from gross vs net totals		—	fcb390f	1	Cristo Chandra				Shipped
+CH-0010	2026-05-13	1.1.0	fix	CRM	ensure mathematically perfect tallying (Subtotal - Discount = Total) across all legacy records		—	7826a61	1	Cristo Chandra				Shipped
+CH-0011	2026-05-13	1.1.0	fix	CRM	ensure column Aft Disc displays actual discounted unit price instead of nominal discount value		—	d821091	1	Cristo Chandra				Shipped
+CH-0012	2026-05-13	2.0.0	fix	CRM	After Disc = Unit Price - discount, Subtotal = sum of row totals, remove Total Discount row, cache bust v2.0		—	225e8e4	2	Cristo Chandra				Shipped
+CH-0013	2026-05-13	2.1.0	fix	CRM	fully robust legacy Line_Total detection to automatically derive net unit price vs discount amount, bump v2.1		—	a30c3e5	2	Cristo Chandra				Shipped
+CH-0014	2026-05-13	2.2.0	feat	CRM	implement dynamic per-customer B2B pricing agreement mapping with automatic invoice suggestion discounts, bump v2.2		—	6fc8d8f	5	Cristo Chandra				Shipped
+CH-0015	2026-05-13	2.2.0	style		add dedicated Add New buttons below search bars for Products, Customers, and Users tabs in Master Data view		—	342366a	2	Cristo Chandra				Shipped
+CH-0016	2026-05-13	2.3.0	feat	Inventory	add Excel parsing, variant mapping, and preview confirmation for E-commerce inventory deduction		—	ee06a5d	2	Cristo Chandra				Shipped
+CH-0017	2026-05-13	2.3.0	feat	Inventory	implement smart product name matching against master data, strict e-commerce order status filtering, and grouped preview recaps		—	5260b3b	1	Cristo Chandra				Shipped
+CH-0018	2026-05-13	2.3.0	feat	Dashboard	support channel filtering (All, Online, B2B) in Dashboard Top Selling SKUs chart and add Payment_Date input field for DO payment proof uploads		—	8b12a99	4	Cristo Chandra				Shipped
+CH-0019	2026-05-13	2.3.0	refactor	Inventory	update e-commerce deduction confirmation button to display total physical net pieces sold		—	5d2c0e2	1	Cristo Chandra				Shipped
+CH-0020	2026-05-13	2.3.0	feat	Inventory	add Est. Value per Unit analytical column to E-Commerce stock out recap table		—	c291ab3	1	Cristo Chandra				Shipped
+CH-0021	2026-05-19	2.4.0	feat	Inventory	upgrade e-commerce sync, duplicate prevention, payment status sync, and history UI coloring		—	20fa324	4	Cristo Chandra				Shipped
+CH-0022	2026-05-19	2.4.0	style	Dashboard	remove low stock alerts section from dashboard		—	dc3c18e	2	Cristo Chandra				Shipped
+CH-0023	2026-06-22	2.5.0	feat	Dashboard	stock opname inventory prep and invoice-DO status integration		—	c114fd5	9	Cristo Chandra				Shipped
+CH-0024	2026-07-01	2.6.0	feat	Dashboard	desktop web layout + cashflow dashboard, Clinic (Express) warehouse, e-commerce SKU-Induk mapping, monthly expense view		—	f2f175c	8	Cristo Chandra				Shipped
+CH-0025	2026-07-01	2.6.0	fix	Expenses	exclude dividend/investment give-back payouts from dashboard expense and cashflow	Dividend and investment give-back payouts no longer count as operating expense or cashflow.	—	8d6abb8	2	Cristo Chandra	Medium	Expense total before/after compared against the categorized expense list.	git revert 8d6abb8 — filter logic only.	Shipped
+CH-0026	2026-07-01	2.6.0	feat		add historical offline income import, wired into dashboard cashflow	Historical offline income import, wired into the dashboard cashflow.	—	b7ab923	1	Cristo Chandra	Medium	Imported totals reconciled against the historical income tracker.	git revert b7ab923; delete OFFIN-* rows from the Offline_Income sheet.	Shipped
+CH-0027	2026-08-05	2.7.0	fix	Inventory	TK-002 CSV stock-out reconciliation + import log	Reworked the e-commerce CSV import so a re-uploaded month closes stock-out gaps without double-counting sales. Sale keys and deduction keys are tracked separately per Order_ID|SKU.	TK-002	e03e427	3	Cristo Chandra	High	Re-uploaded a full month and confirmed sales count unchanged while missing deductions were filled.	git revert e03e427; previously-repaired Inventory_Out rows must be deleted by Reference_ID.	Shipped
+CH-0028	2026-08-10	2.8.0	feat	Dashboard	analytics — profit/margin, trends, channel & weekly online	Dashboard analytics: profit and margin, period-over-period trends, channel split and weekly online performance.	TK-001	6c70af4	4	Cristo Chandra	Medium	Cross-checked profit and margin against the finance tracker workbook for the same period.	git revert 6c70af4 — read-only dashboard code, no stored data affected.	Shipped
+CH-0029	2026-08-10	2.8.0	feat	Dashboard	exclude costless offline income from margin ratio	Offline income rows that carry no COGS are excluded from the margin ratio, so margin is not inflated by costless income.	TK-001	58498ea	3	Cristo Chandra	Medium	Margin recomputed with and without offline income; difference matched the offline income total.	git revert 58498ea — display-only.	Shipped
