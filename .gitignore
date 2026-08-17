@@ -2,3 +2,12 @@
 node_modules/
 .env
 *.log
+
+# Marketplace order exports — contain customer names, phone numbers and
+# shipping addresses. Keep them local; never commit customer PII.
+E-commerce Doc example/
+*.xlsx
+
+# Local scratch/parsing helpers
+scratch/
+

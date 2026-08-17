@@ -307,17 +307,53 @@ const Inventory = {
   },
 
   // ---- E-commerce CSV mapping config ----
-  // Map Shopee "SKU Induk" (column N) -> master SKU(s). A listing can expand to
-  // multiple master SKUs (bundles). Pack size always comes from "Nama Variasi".
-  // Add new marketplace listings here without touching the parsing logic.
+  // Map a Shopee listing -> master SKU(s). A listing can expand to multiple
+  // master SKUs (bundles); pack size is resolved separately by packSize().
+  //
+  // Shopee's SKU scheme was renamed in Aug 2026: numeric parent codes
+  // ("002", "011", "B-0010") became alpha codes ("CL-02", "SS-04", "BD-02"),
+  // and the variation SKU gained the pack size as a third segment
+  // ("CL-02-3" = 3 pcs). The rename also CONSOLIDATES listings — the three
+  // separate cleanser listings 002/006/011 are all "CL-02" now.
+  //
+  // Historical exports still carry the old codes and get re-uploaded to close
+  // deduction gaps (TK-002), so BOTH schemes stay mapped here permanently.
+  // Never delete the legacy block.
   ECOMMERCE_SKU_MAP: {
-    '002': [{ sku: 'SM-OCC-100', units: 1 }],                                  // Oil Control Cleanser
-    '006': [{ sku: 'SM-OCC-100', units: 1 }],                                  // Twin Oil Control Cleanser listing
-    '011': [{ sku: 'SM-OCC-100', units: 1 }],                                  // Triple Pack Cleanser (Sabun, Salicylic)
-    '005': [{ sku: 'SM-CT-100', units: 1 }],                                   // Twin Cleansing Toner listing
-    '003': [{ sku: 'SM-OCC-100', units: 1 }, { sku: 'SM-CT-100', units: 1 }]   // Bundle = 1 OCC + 1 CT
-    // '009' (Cleansing Cotton Pads) intentionally omitted -> ignored
+    // ---- current scheme (SKU Induk, post-rename) ----
+    'CL-02': [{ sku: 'SM-OCC-100', units: 1 }],                                 // Oil Control Cleanser (all cleanser listings)
+    'TN-01': [{ sku: 'SM-CT-100', units: 1 }],                                  // Cleansing Toner
+    'SS-04': [{ sku: 'SM-UVS-025', units: 1 }],                                 // UV Shield Sunscreen SPF50
+    'SS-08': [{ sku: 'SM-AUV-025', units: 1 }],                                 // Acneshield UV Defense Sunscreen Glow (new Aug 2026)
+    'BD-01': [{ sku: 'SM-OCC-100', units: 1 }, { sku: 'SM-CT-100', units: 1 }],                                 // OCC + Toner
+    'BD-02': [{ sku: 'SM-OCC-100', units: 1 }, { sku: 'SM-UVS-025', units: 1 }],                                // OCC + UV Shield
+    'BD-03': [{ sku: 'SM-UVS-025', units: 1 }, { sku: 'SM-CT-100', units: 1 }],                                 // UV Shield + Toner
+    'BD-04': [{ sku: 'SM-OCC-100', units: 1 }, { sku: 'SM-CT-100', units: 1 }, { sku: 'SM-UVS-025', units: 1 }], // Acne Kit Trio
+    'BD-06': [{ sku: 'SM-OCC-100', units: 1 }, { sku: 'SM-CT-100', units: 1 }, { sku: 'SM-AUV-025', units: 1 }], // Triple Defense Trio (new Aug 2026)
+
+    // ---- legacy numeric scheme (exports created before the rename) ----
+    '002': [{ sku: 'SM-OCC-100', units: 1 }],                                   // Oil Control Cleanser        -> CL-02
+    '006': [{ sku: 'SM-OCC-100', units: 1 }],                                   // Twin Oil Control Cleanser   -> CL-02
+    '011': [{ sku: 'SM-OCC-100', units: 1 }],                                   // Triple Pack Cleanser        -> CL-02
+    '005': [{ sku: 'SM-CT-100', units: 1 }],                                    // Twin Cleansing Toner        -> TN-01
+    '004': [{ sku: 'SM-UVS-025', units: 1 }],                                   // UV Shield Sunscreen         -> SS-04
+    '012': [{ sku: 'SM-UVS-025', units: 1 }],                                   // Triple Pack UV Shield       -> SS-04
+    '003': [{ sku: 'SM-OCC-100', units: 1 }, { sku: 'SM-CT-100', units: 1 }],                                   // -> BD-01
+    '007': [{ sku: 'SM-OCC-100', units: 1 }, { sku: 'SM-CT-100', units: 1 }, { sku: 'SM-UVS-025', units: 1 }],   // Acne Kit Trio -> BD-04
+    '0010': [{ sku: 'SM-OCC-100', units: 1 }, { sku: 'SM-UVS-025', units: 1 }],                                  // Morning routine pack -> BD-02
+    'B-0010': [{ sku: 'SM-OCC-100', units: 1 }, { sku: 'SM-UVS-025', units: 1 }]                                 // same listing, later code
   },
+
+  // Listings that deliberately do NOT move finished-goods stock. Listed
+  // explicitly (rather than just left unmapped) so an unmapped listing can be
+  // reported as a warning instead of silently vanishing from the deduction.
+  ECOMMERCE_IGNORED_SKUS: [
+    'CP-09', '009',        // Cleansing Cotton Pads — accessory, not stock-tracked
+    'GA-01',               // Greeting Card
+    'GA-02',               // Box Wrapping
+    'GA-03',               // Extra Bubble Wrap  (packaging stock pending TK-004)
+    'BD-05'                // DUO Bestfriend Gift Set — composition unconfirmed (TK-007)
+  ],
 
   processUpload(file) {
     if (!file) return;
@@ -325,9 +361,24 @@ const Inventory = {
 
     const CUTOVER = '2026-06-25'; // orders on/after this date deduct stock; before it = revenue/qty only
 
-    // Pack size from "Nama Variasi" (Q): Single/blank=1, Twin=2, Triple=3, else parse "(N pcs)".
-    const packSizeFromVariation = (variation) => {
-      const v = String(variation || '').toLowerCase();
+    // Pack size (pcs per ordered unit).
+    //
+    // Post-rename, the variation SKU is authoritative: its third segment IS the
+    // quantity — "CL-02-3" = 3 pcs, "SS-08-2" = 2 pcs. Only a full three-segment
+    // LL-NN-N match counts, so a suffix-less bundle parent ("BD-02") is never
+    // misread as 2 pcs, and a lettered variant ("CP-09-A" = Bulat) is never
+    // misread as a quantity.
+    //
+    // Legacy rows (variation SKU "1103", "0010") don't match that shape and
+    // fall through to the "Nama Variasi" text rule, which is how they have
+    // always been read — so re-uploading any pre-rename month is unchanged.
+    const PACK_FROM_VARIATION_SKU = /^[A-Za-z]{2}-\d{2}-(\d+)$/;
+
+    const packSizeOf = (variationSku, variationName) => {
+      const bySku = String(variationSku || '').trim().match(PACK_FROM_VARIATION_SKU);
+      if (bySku) return Number(bySku[1]) || 1;
+
+      const v = String(variationName || '').toLowerCase();
       const m = v.match(/(\d+)\s*pcs/);
       if (m) return Number(m[1]) || 1;
       if (v.indexOf('triple') !== -1) return 3;
@@ -335,19 +386,124 @@ const Inventory = {
       return 1; // single / blank / unknown
     };
 
-    // Resolve a row to master targets [{sku, units}].
-    // 1) by SKU Induk map  2) name-keyword fallback (resilient to new listings).
-    const resolveTargets = (skuInduk, rawName) => {
-      const raw = String(skuInduk || '').trim();
-      const stripped = raw.replace(/^0+(?=\d)/, '');
-      const map = this.ECOMMERCE_SKU_MAP;
-      const direct = map[raw] || map[stripped] || map['0' + stripped] || map['00' + stripped];
-      if (direct) return direct;
+    const isIgnoredListing = (code) => {
+      const c = String(code || '').trim().toUpperCase();
+      if (!c) return false;
+      return this.ECOMMERCE_IGNORED_SKUS.some(ig => c === ig.toUpperCase());
+    };
+
+    // Read the product name into master targets, independently of any SKU.
+    // Used twice: as the fallback for an unmapped listing, and as a cross-check
+    // on every mapped listing (see resolveTargets).
+    //
+    // Bundles are tested FIRST: "Bundle Oil Control Cleanser + UV Shield
+    // Sunscreen" contains "sunscreen", so a single-product test run first would
+    // deduct only the sunscreen and silently drop the cleanser.
+    const targetsFromName = (rawName) => {
       const n = String(rawName || '').toLowerCase();
-      if (n.indexOf('sunscreen') !== -1 || n.indexOf('uv shield') !== -1 || n.indexOf('spf') !== -1) return [{ sku: 'SM-UVS-025', units: 1 }];
-      if (n.indexOf('cleansing toner') !== -1 || (n.indexOf('toner') !== -1 && n.indexOf('niacinamide') !== -1)) return [{ sku: 'SM-CT-100', units: 1 }];
-      if (n.indexOf('cleanser') !== -1 || n.indexOf('oil control') !== -1 || (n.indexOf('sabun') !== -1 && n.indexOf('salicylic') !== -1)) return [{ sku: 'SM-OCC-100', units: 1 }];
-      return null; // unmapped (e.g. cotton pads) -> ignore
+      if (!n) return null;
+      const has = (...words) => words.every(w => n.indexOf(w) !== -1);
+      const isSunscreen = n.indexOf('sunscreen') !== -1 || n.indexOf('uv shield') !== -1 || n.indexOf('uv defense') !== -1 || n.indexOf('acneshield') !== -1 || n.indexOf('spf') !== -1;
+      const isToner = n.indexOf('toner') !== -1;
+      const isCleanser = n.indexOf('cleanser') !== -1 || n.indexOf('oil control') !== -1 || has('sabun', 'salicylic');
+      const looksBundled = n.indexOf('bundle') !== -1 || n.indexOf('kit') !== -1 || n.indexOf('trio') !== -1 || n.indexOf('duo') !== -1 || n.indexOf('paket') !== -1 || n.indexOf('+') !== -1;
+      const acne = n.indexOf('acneshield') !== -1 || n.indexOf('uv defense') !== -1;
+
+      if (looksBundled) {
+        const parts = [];
+        if (isCleanser) parts.push({ sku: 'SM-OCC-100', units: 1 });
+        if (isToner) parts.push({ sku: 'SM-CT-100', units: 1 });
+        if (isSunscreen) parts.push({ sku: acne ? 'SM-AUV-025' : 'SM-UVS-025', units: 1 });
+        if (parts.length > 1) return parts;   // >1 component = a real bundle
+      }
+
+      if (acne) return [{ sku: 'SM-AUV-025', units: 1 }];
+      if (isSunscreen) return [{ sku: 'SM-UVS-025', units: 1 }];
+      if (n.indexOf('cleansing toner') !== -1 || (isToner && n.indexOf('niacinamide') !== -1)) return [{ sku: 'SM-CT-100', units: 1 }];
+      if (isCleanser) return [{ sku: 'SM-OCC-100', units: 1 }];
+      return null; // name has no opinion (cotton pads, gift wrapping, gift sets)
+    };
+
+    // Compare a SKU-map result against the name at PRODUCT FAMILY level rather
+    // than exact SKU. The name can tell "sunscreen" from "toner", but it cannot
+    // tell UV Shield from Acneshield — both are sunscreens — so comparing exact
+    // SKUs would fire on every BD-06 sale. Families keep the check meaningful.
+    const familyOf = (sku) => ({
+      'SM-OCC-100': 'cleanser',
+      'SM-CT-100': 'toner',
+      'SM-UVS-025': 'sunscreen',
+      'SM-AUV-025': 'sunscreen'
+    })[sku] || sku;
+
+    const familySignature = (targets) =>
+      [...new Set((targets || []).map(t => familyOf(t.sku)))].sort().join('+');
+
+    // Listings whose SKU->name disagreement was checked and is expected.
+    // Keyed by parent code, value is the name-derived signature to tolerate.
+    const CROSSCHECK_EXCEPTIONS = {};
+
+    // Warnings raised during this file's parse, deduped per listing.
+    const mismatchWarnings = new Map();
+
+    // Resolve a row to master targets [{sku, units}], or null to skip the line.
+    //   1) SKU Induk lookup (both schemes)
+    //   2) parent derived from the variation SKU, when SKU Induk is blank
+    //   3) name-keyword fallback, for a listing created before it is mapped here
+    //
+    // A SKU-map hit is never trusted blindly: Shopee reassigned parent codes
+    // wholesale in the Aug 2026 rename, so a stale map entry would keep
+    // deducting the wrong product with no visible symptom. The name is read on
+    // every row and any family-level disagreement is surfaced in the preview
+    // BEFORE the user confirms. The map still wins — it is the explicit
+    // configuration — but the operator gets told.
+    const resolveTargets = (skuInduk, variationSku, rawName) => {
+      const map = this.ECOMMERCE_SKU_MAP;
+
+      const lookup = (code) => {
+        const raw = String(code || '').trim();
+        if (!raw) return null;
+        const upper = raw.toUpperCase();
+        const stripped = raw.replace(/^0+(?=\d)/, '');
+        return map[raw] || map[upper] || map[stripped] || map['0' + stripped] || map['00' + stripped] || null;
+      };
+
+      const varSku = String(variationSku || '').trim();
+      const parentFromVar = varSku.match(PACK_FROM_VARIATION_SKU) ? varSku.replace(/-\d+$/, '') : varSku;
+
+      const byName = targetsFromName(rawName);
+
+      const crossCheck = (code, viaSku) => {
+        if (!byName) return viaSku;              // name has no opinion -> nothing to compare
+        const wantSig = familySignature(byName);
+        const gotSig = familySignature(viaSku);
+        if (wantSig === gotSig) return viaSku;
+        if (CROSSCHECK_EXCEPTIONS[code] === wantSig) return viaSku;
+        const key = `${code}|${wantSig}|${gotSig}`;
+        if (!mismatchWarnings.has(key)) {
+          mismatchWarnings.set(key, {
+            code, lines: 0, name: String(rawName || '').trim(),
+            mapped: (viaSku || []).map(t => t.sku).join(' + '),
+            expected: (byName || []).map(t => t.sku).join(' + ')
+          });
+        }
+        mismatchWarnings.get(key).lines++;
+        return viaSku;                            // map still wins; operator is warned
+      };
+
+      // An ignored listing is still cross-checked, so that a code landing on the
+      // ignore list while its name says "cleanser" cannot silently drop stock.
+      if (isIgnoredListing(skuInduk)) { crossCheck(skuInduk, []); return null; }
+
+      const direct = lookup(skuInduk);
+      if (direct) return crossCheck(skuInduk, direct);
+
+      // SKU Induk blank/unknown -> recover the parent from the variation SKU
+      // ("CL-02-3" -> "CL-02"), then retry.
+      if (isIgnoredListing(parentFromVar)) { crossCheck(parentFromVar, []); return null; }
+      const viaVariation = lookup(parentFromVar);
+      if (viaVariation) return crossCheck(parentFromVar, viaVariation);
+
+      return byName; // unmapped listing -> trust the name, or null if it has none
     };
 
     // Route to warehouse by "Opsi Pengiriman" (G).
@@ -361,67 +517,6 @@ const Inventory = {
 
     // Indonesian currency uses '.' as thousands separator -> strip non-digits.
     const idrToNumber = (val) => Number(String(val == null ? '' : val).replace(/[^0-9]/g, '')) || 0;
-
-    const matchProduct = (rawName, masterData) => {
-      const lowerName = rawName.toLowerCase();
-      
-      // 1. Direct contains check
-      const directMatch = masterData.find(mp => 
-        lowerName.includes(mp.Product_Name.toLowerCase()) ||
-        mp.Product_Name.toLowerCase().includes(lowerName)
-      );
-      if (directMatch) return directMatch;
-      
-      // 2. Normalized check (ignoring spaces, punctuation, special chars like +)
-      const normalize = (str) => String(str || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-      const normName = normalize(rawName);
-      if (normName.length > 3) {
-        const normMatch = masterData.find(mp => {
-          const normMP = normalize(mp.Product_Name);
-          return normName.includes(normMP) || normMP.includes(normName);
-        });
-        if (normMatch) return normMatch;
-      }
-      
-      // 3. Specific keyword mappings based on Selfmology product lines
-      if (lowerName.includes('cleanser')) {
-        const p = masterData.find(mp => mp.SKU === 'SM-CLN-001');
-        if (p) return p;
-      }
-      if (lowerName.includes('toner')) {
-        const p = masterData.find(mp => mp.SKU === 'SM-TNR-001');
-        if (p) return p;
-      }
-      if (lowerName.includes('serum')) {
-        const p = masterData.find(mp => mp.SKU === 'SM-SRM-001');
-        if (p) return p;
-      }
-      if (lowerName.includes('moisturizer') || lowerName.includes('moist')) {
-        const p = masterData.find(mp => mp.SKU === 'SM-MST-001');
-        if (p) return p;
-      }
-      if (lowerName.includes('mask')) {
-        const p = masterData.find(mp => mp.SKU === 'SM-MSK-001');
-        if (p) return p;
-      }
-      if (lowerName.includes('eye')) {
-        const p = masterData.find(mp => mp.SKU === 'SM-EYE-001');
-        if (p) return p;
-      }
-      if (lowerName.includes('sunscreen') || lowerName.includes('uv shield') || lowerName.includes('uvshield')) {
-        const p = masterData.find(mp => mp.SKU === 'SM-UVS-025');
-        if (p) return p;
-      }
-      
-      // 4. Keyword overlapping match fallback
-      for (const mp of masterData) {
-        const keywords = mp.Product_Name.toLowerCase().split(/\s+/).filter(k => k.length > 2 && k !== 'pack' && k !== 'shield');
-        if (keywords.length > 0 && keywords.every(k => lowerName.includes(k))) {
-          return mp;
-        }
-      }
-      return null;
-    };
 
     // Create a deep copy of summary to simulate FIFO for the preview without touching real stock yet
     const localSummary = JSON.parse(JSON.stringify(this.summary));
@@ -506,13 +601,17 @@ const Inventory = {
           if (status.indexOf('batal') !== -1 || status.indexOf('cancel') !== -1) continue;
 
           const rawName = String(row['Nama Produk'] || row['Product Name'] || '').trim();
-          const skuInduk = String(row['SKU Induk'] || row['Nomor Referensi SKU'] || '').trim();
-          const targets = resolveTargets(skuInduk, rawName);
+          // "SKU Induk" = parent listing code, "Nomor Referensi SKU" = variation
+          // code. Post-rename the variation code carries the pack size, so the
+          // two are read as separate fields rather than one falling back to the other.
+          const skuInduk = String(row['SKU Induk'] || row['Parent SKU'] || '').trim();
+          const variationSku = String(row['Nomor Referensi SKU'] || row['SKU'] || '').trim();
+          const targets = resolveTargets(skuInduk, variationSku, rawName);
           if (!targets) continue; // unmapped listing (e.g. Cotton Pads) -> ignore
 
           const refId = String(row['No. Pesanan'] || row['Order ID'] || '').trim();
           const variasi = String(row['Nama Variasi'] || row['Variation Name'] || '').trim();
-          const packSize = packSizeFromVariation(variasi);
+          const packSize = packSizeOf(variationSku, variasi);
           const jumlah = Number(row['Jumlah'] || row['Quantity'] || 1) || 1;
 
           let dateStr = String(row['Waktu Pesanan Dibuat'] || row['Order Creation Date'] || '').trim();
@@ -615,6 +714,11 @@ const Inventory = {
           if (skippedDuplicates > 0) {
             msg = `Everything in this file was already imported (${skippedDuplicates} lines skipped). Nothing to do.`;
           }
+          // Nothing is being written, but a mismatch here means the earlier
+          // import already deducted the wrong product — still worth saying.
+          if (mismatchWarnings.size > 0) {
+            App.toast(`${mismatchWarnings.size} listing(s) have a SKU/product-name mismatch — the SKU map may be stale. Check ECOMMERCE_SKU_MAP.`, "warning");
+          }
           App.toast(msg, "info");
           document.getElementById('csv-file-input').value = '';
           return;
@@ -650,6 +754,35 @@ const Inventory = {
             `;
           }
 
+          // SKU->name disagreement. Shown before confirmation because the stock
+          // effect is invisible afterwards: the deduction simply lands on the
+          // wrong product. Red rather than orange — this one wants a decision.
+          let mismatchNotice = '';
+          if (mismatchWarnings.size > 0) {
+            const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+            const items = [...mismatchWarnings.values()].sort((a, b) => b.lines - a.lines);
+            const totalLines = items.reduce((s, w) => s + w.lines, 0);
+            mismatchNotice = `
+              <div style="background: var(--color-red-light, #fee2e2); border-left: 4px solid var(--color-red, #dc2626); padding: 12px 16px; border-radius: 6px; margin-bottom: 16px; font-size: 12px; color: var(--color-red, #dc2626); line-height: 1.5;">
+                <div style="font-weight:700; margin-bottom:6px;">
+                  🚨 SKU / product-name mismatch — ${totalLines} line(s) across ${items.length} listing(s)
+                </div>
+                <div style="font-weight:500; margin-bottom:8px;">
+                  The SKU map and the product name disagree about what was sold. Stock will be deducted per the SKU map. Check these before you confirm.
+                </div>
+                ${items.map(w => `
+                  <div style="margin-top:6px; padding-top:6px; border-top:1px solid rgba(220,38,38,.25);">
+                    <div style="font-weight:600;">[${esc(w.code) || 'no code'}] × ${w.lines} line(s)</div>
+                    <div style="font-size:11px; opacity:.9;">${esc(w.name).slice(0, 90)}</div>
+                    <div style="font-size:11px; margin-top:2px;">
+                      deducting <strong>${esc(w.mapped) || '(nothing — on ignore list)'}</strong>
+                      · name suggests <strong>${esc(w.expected)}</strong>
+                    </div>
+                  </div>`).join('')}
+              </div>
+            `;
+          }
+
           const chip = (label, val, color) => `
             <div style="flex:1; min-width:96px; background:var(--bg-secondary); border-radius:8px; padding:10px 12px; text-align:center;">
               <div style="font-size:18px; font-weight:800; color:${color};">${val}</div>
@@ -664,6 +797,7 @@ const Inventory = {
             </div>`;
 
           previewEl.innerHTML = `
+            ${mismatchNotice}
             ${duplicateWarning}
             ${repairNotice}
             ${breakdown}
