@@ -17,6 +17,12 @@ middle one — nothing recorded *what actually shipped*.
 | **Ticket Log** | *Why* are we doing this? | one request | existing |
 | **Change Log** | *What* shipped, and can we undo it? | one commit | **new — add this tab** |
 | **Release Log** | *Which* version did the user receive? | one version | existing (was empty) |
+| **What's Next** | *What should we do now?* | one action | **new — add this tab** |
+
+The first three are a historical record. **What's Next** is the only forward-looking
+one: a short, ranked list of what to do next, rewritten each time work ships rather
+than appended to. Keep it under ~10 rows — if everything is on it, nothing is next.
+Anything that grows a life of its own becomes a ticket and drops off this list.
 
 A ticket can produce several changes. Several changes bundle into one release.
 Keeping them separate is what lets you answer "the Aug 10 dashboard numbers look
@@ -142,6 +148,23 @@ Columns G, L, M and N are the ones worth the typing. The rest is generated.
 | **High** | Touches stock quantities, money, or historical records that are re-processed (any change to the CSV import path is High by default) |
 | **Medium** | Changes a calculation shown to the user, but is recomputed from source on every load |
 | **Low** | UI, copy, layout, docs, tooling |
+
+---
+
+## 3b. What's Next tab — column definition
+
+| Column | Notes |
+| --- | --- |
+| `Priority` | 1 = do first. Renumber freely; this list is rewritten, not appended to. |
+| `Action` | One concrete next step, phrased as something a person can start. |
+| `Why it matters` | The consequence of *not* doing it. If this is hard to write, the row probably does not belong. |
+| `Owner` | Who moves it. |
+| `Blocked By` | The specific missing input, not "waiting". |
+| `Target` | When, or the event that should trigger it. |
+| `Status` | Open / Blocked - waiting for input / Backlog / Done |
+
+Replace the whole tab's contents each time work ships. Rows that survive several
+rewrites without moving are a signal: either promote them to a ticket or drop them.
 
 ---
 

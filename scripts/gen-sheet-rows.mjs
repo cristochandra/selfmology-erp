@@ -62,8 +62,10 @@ function loadOverrides() {
 
 function readCommits() {
   // Oldest first, so Change IDs and version inheritance run forward in time.
+  // --no-merges: a merge carries no change of its own and its subject repeats
+  // the branch summary, so including it double-counts the work.
   const SEP = '';
-  const raw = git('log', '--reverse', '--date=short', `--pretty=format:%h${SEP}%ad${SEP}%an${SEP}%s${SEP}%b${SEP}`);
+  const raw = git('log', '--reverse', '--no-merges', '--date=short', `--pretty=format:%h${SEP}%ad${SEP}%an${SEP}%s${SEP}%b${SEP}`);
   if (!raw.trim()) return [];
 
   return raw.split('\n').filter(Boolean).map((chunk) => {
