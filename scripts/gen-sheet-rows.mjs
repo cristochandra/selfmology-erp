@@ -155,11 +155,16 @@ function build() {
     }
   }
 
+  // Known Issues and Notes cannot be derived from commits — a caveat is
+  // precisely the thing the commit didn't say. They come from _releases.
+  const releaseMeta = overrides._releases || {};
   const releaseHeader = ['Version', 'Release Date', 'Features Delivered', 'Bugs Fixed',
     'Known Issues', 'Owner', 'Notes'];
-  const releaseRows = [...byVersion.entries()].map(([version, r]) => [
-    `v${version}`, r.date, r.features.join('; '), r.bugs.join('; '), '', r.owner, ''
-  ]);
+  const releaseRows = [...byVersion.entries()].map(([version, r]) => {
+    const meta = releaseMeta[version] || {};
+    return [`v${version}`, r.date, r.features.join('; '), r.bugs.join('; '),
+      meta.knownIssues || '', meta.owner || r.owner, meta.notes || ''];
+  });
 
   mkdirSync(OUT_DIR, { recursive: true });
   writeFileSync(resolve(OUT_DIR, 'change-log.tsv'), toTsv(changeHeader, changeRows));
