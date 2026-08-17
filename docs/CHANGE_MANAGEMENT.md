@@ -7,17 +7,19 @@ repeatable path. This document is the definition of that path.
 
 ---
 
-## 1. Why three registers, not one
+## 1. Why four registers, not one
 
-The sheet already had two of the three registers it needs. The gap was the
+The sheet already had two of the four registers it needs. The gap was the
 middle one — nothing recorded *what actually shipped*.
 
 | Register | Answers | Grain | Tab |
 | --- | --- | --- | --- |
-| **Ticket Log** | *Why* are we doing this? | one request | existing |
-| **Change Log** | *What* shipped, and can we undo it? | one commit | **new — add this tab** |
-| **Release Log** | *Which* version did the user receive? | one version | existing (was empty) |
-| **What's Next** | *What should we do now?* | one action | **new — add this tab** |
+| **Ticket Log** | *Why* are we doing this? | one request | `Request Tracker` |
+| **Change Log** | *What* shipped, and can we undo it? | one commit | `Change Log` |
+| **Release Log** | *Which* version did the user receive? | one version | `Release Log` |
+| **What's Next** | *What should we do now?* | one action | `What's Next` |
+
+Note the ticket tab is named **`Request Tracker`**, not "Ticket Log".
 
 The first three are a historical record. **What's Next** is the only forward-looking
 one: a short, ranked list of what to do next, rewritten each time work ships rather
@@ -58,9 +60,19 @@ invented from scratch:
 
 ### Step 1 — Raise a ticket (before work starts)
 
-One row in **Ticket Log**. Fill only the input columns; leave
-`Priority Score`, `Priority Level` and `Resolution Time (Days)` to the sheet's
-own formulas.
+One row in **Request Tracker**. Fill the input columns; write the *formula* into
+`Priority Score`, `Priority Level` and `Resolution Time (Days)` for that row —
+never a literal number. The formulas are:
+
+```
+M  Priority Score     =H{r}*3+I{r}*2+J{r}*2+K{r}*3-L{r}
+N  Priority Level     =IFS(M{r}>=40,"Critical",M{r}>=30,"High",M{r}>=20,"Medium",M{r}>=10,"Low",M{r}<10,"Future")
+U  Resolution Time    =IF(T{r}<>"",T{r}-B{r},"")
+```
+
+So Priority Score weights **Impact ×3, Urgency ×2, Frequency ×2, Severity ×3,
+minus Complexity** — severity and business impact dominate, and a complex fix is
+nudged down rather than penalised heavily.
 
 Ticket IDs are sequential: `TK-001`, `TK-002`, …
 
@@ -101,25 +113,29 @@ and infers `Type`, `Module`, `Version` and `Ticket ID`. Anything it cannot infer
 — **Risk**, **Verification**, **Rollback** — comes from
 `docs/change-log-overrides.json`, which you edit once per meaningful change.
 
-### Step 4 — Paste into the sheet
+### Step 4 — Write to the sheet
 
-Open the tab, click the first empty cell of column A, paste. TSV pastes into
-columns without needing an import dialog.
+The rows go into the spreadsheet directly via the authorized Google Sheets
+connection. No copy-paste step. The TSVs under `docs/sheet-exports/` are staging
+output — useful for review and diffing, but they are not the delivery mechanism.
 
-> **Do not paste into `Priority Score`, `Priority Level`, or
-> `Resolution Time (Days)`.** Those hold sheet formulas; pasted values overwrite
-> them. The generated ticket rows leave those columns empty for that reason.
+> **Never write literal values into `Priority Score`, `Priority Level`, or
+> `Resolution Time (Days)`.** Those cells hold formulas; write the formula for the
+> target row instead, so the column keeps working when inputs change.
+
+---
 
 ### Step 5 — Cut a release
 
 When a batch of changes goes live, add one **Release Log** row and bump the
-version. Roll up the Change Log entries into the Keep-a-Changelog sections.
+version. Roll up the Change Log entries into the Keep-a-Changelog sections, and
+rewrite **What's Next** to reflect the new state.
 
 ---
 
 ## 3. Change Log tab — column definition
 
-Add a tab named **Change Log** with this header row:
+The **Change Log** tab (created 2026-08-17) has this header row:
 
 | # | Column | Source | Notes |
 | --- | --- | --- | --- |
@@ -188,10 +204,20 @@ Whenever a feature, fix or data change is made to this project:
 
 1. Update `docs/change-log-overrides.json` with Detail / Risk / Verification / Rollback.
 2. Run `node scripts/gen-sheet-rows.mjs`.
-3. Hand over the regenerated TSVs from `docs/sheet-exports/` with a note on
-   which tab each one belongs to, and which rows are new since last time.
-4. Raise a ticket row for any *new* problem found along the way, rather than
+3. **Write the rows into the spreadsheet directly.** Do not hand over files to
+   paste — that was explicitly rejected. A Google Sheets connection is authorized
+   as `cristocl13@gmail.com`.
+4. Rewrite the **What's Next** tab to match the new state, rather than appending.
+5. Raise a ticket row for any *new* problem found along the way, rather than
    fixing it silently.
+6. Read the affected ranges back afterwards and confirm the formula columns
+   computed. A write that reports `200 OK` has not been verified.
 
-If a Google Sheets connection is ever authorized, steps 3–4 can write to the
-spreadsheet directly instead of producing paste files.
+### Writing efficiently
+
+Use the Sheets REST API through the connection's raw-request action —
+`values:batchUpdate` with `valueInputOption: USER_ENTERED` — rather than
+row-by-row actions. Two calls cover a 33-row table; row-by-row would take 33.
+
+Generate the JSON body from the TSV with a script. Transcribing 15-column rows by
+hand into a tool call is how a wrong commit SHA or a dropped column gets in.

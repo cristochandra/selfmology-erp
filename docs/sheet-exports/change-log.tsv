@@ -32,3 +32,4 @@ CH-0030	2026-08-17	2.9.0	feat	Inventory	Shopee SKU rename migration, Acneshield 
 CH-0031	2026-08-17	2.9.0	docs		change management method and tracker-sheet row generator	Change management method (docs/CHANGE_MANAGEMENT.md) plus scripts/gen-sheet-rows.mjs, which generates paste-ready tracker-sheet TSV from git history.	—	4630cae	7	Cristo Chandra	Low	Generator run against full history; every output row field-count verified uniform.	git revert 4630cae — documentation and tooling only.	Shipped
 CH-0032	2026-08-17	2.9.0	chore		add per-release Known Issues and Notes to the row generator		TK-006	6d834fa	4	Cristo Chandra				Shipped
 CH-0033	2026-08-17	2.9.0	docs		add What's Next register; exclude merge commits from the Change Log		TK-009	dbcc112	5	Cristo Chandra				Shipped
+CH-0034	2026-08-17	2.9.0	docs		record v2.9.0 as deployed; correct TK-009 and re-rank What's Next		TK-009	c2a7bb0	5	Cristo Chandra				Shipped
